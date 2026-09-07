@@ -4,7 +4,7 @@ const req = request(
   {
     host: "127.0.0.1",
     port: 8765,
-    path: "/healthz",
+    path: "/readyz",
     ca: readFileSync("/tls/server.crt"),
     servername: "localhost",
     headers: { Host: "localhost:8765" },

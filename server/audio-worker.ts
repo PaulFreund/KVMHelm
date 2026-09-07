@@ -10,6 +10,11 @@ import {
 } from "werift";
 import OpusScript from "opusscript";
 import { localLookup, PinnedAgent } from "./network.js";
+import {
+  localIceOnly,
+  checkIceCandidate,
+  checkIceDescription,
+} from "./lan-ice.js";
 const port = parentPort!;
 let ws: WebSocket | undefined,
   session: number | undefined,
@@ -83,6 +88,7 @@ async function watch() {
 }
 async function offer(jsep: any) {
   if (!active) return;
+  checkIceDescription(String(jsep.sdp));
   const peer = new RTCPeerConnection({
     iceServers: [],
     codecs: {
@@ -163,6 +169,7 @@ async function offer(jsep: any) {
     track = new MediaStreamTrack({ kind: "audio" });
     peer.addTrack(track);
   }
+  localIceOnly(peer);
   await peer.setLocalDescription(await peer.createAnswer());
   if (pc !== peer) return;
   send({
@@ -223,8 +230,10 @@ async function start() {
         void offer(m.jsep).catch(() =>
           port.postMessage({ type: "error", code: "AUDIO_NEGOTIATION_FAILED" }),
         );
-      if (m.janus === "trickle" && m.candidate && !m.candidate.completed)
+      if (m.janus === "trickle" && m.candidate && !m.candidate.completed) {
+        checkIceCandidate(m.candidate.candidate);
         void pc?.addIceCandidate(m.candidate).catch(() => {});
+      }
       const result = m.plugindata?.data?.result;
       if (result?.status === "features")
         port.postMessage({

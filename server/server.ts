@@ -24,6 +24,7 @@ import { audioServer } from "./audio.js";
 import { connect as tlsConnect } from "node:tls";
 import { isIP } from "node:net";
 import { localLookup, isLocalAddress } from "./network.js";
+import { requestLimits } from "./request-limits.js";
 export interface ServerOptions {
   host: string;
   port: number;
@@ -31,6 +32,7 @@ export interface ServerOptions {
   key?: string;
   origins: string[];
   dev?: boolean;
+  limits?: { media: number; control: number };
 }
 export async function serve(
   core: Core,
@@ -76,21 +78,34 @@ export async function serve(
   });
   app.use(express.json({ limit: "256kb" }));
   app.use(cookieParser());
-  app.use(
-    rateLimit({
-      windowMs: 60000,
-      limit: 2400,
-      standardHeaders: true,
-      legacyHeaders: false,
-    }),
-  );
   const loginLimit = rateLimit({
     windowMs: 60000,
     limit: 10,
     standardHeaders: true,
     legacyHeaders: false,
   });
+  const failedAuthLimit = rateLimit({
+    windowMs: 60000,
+    limit: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      ok: false,
+      error: {
+        code: "RATE_LIMIT",
+        message: "Too many failed authentication attempts",
+      },
+    },
+  });
   app.get("/healthz", (_q, r) => r.json({ ok: true, service: "KVMHelm" }));
+  app.get("/readyz", async (_q, r) => {
+    try {
+      await core.store.health();
+      r.json({ ok: true });
+    } catch {
+      r.status(503).json({ ok: false, error: { code: "STORAGE_ERROR" } });
+    }
+  });
   app.post("/api/v1/login", loginLimit, (req, res) => {
     if (!req.headers.origin || !origins.has(req.headers.origin))
       throw new GatewayError("FORBIDDEN");
@@ -136,10 +151,11 @@ export async function serve(
       res.locals.identity = identity;
       next();
     } catch (e) {
-      next(e);
+      failedAuthLimit(req, res, () => next(e));
     }
   });
   const who = (r: express.Response) => r.locals.identity as Identity;
+  app.use(...requestLimits(options.limits));
   let audio: ReturnType<typeof audioServer>;
   app.post("/api/v1/sessions/:id/audio", (q, r) => {
     const { microphone } = z
@@ -176,20 +192,46 @@ export async function serve(
   app.get("/api/v1/devices", (_q, r) => r.json(core.list(who(r))));
   app.post("/api/v1/certificates/inspect", async (q, r) => {
     core.auth.check(who(r), "devices:manage");
-    const { address } = z.object({ address: z.string().url() }).strict().parse(q.body);
+    const { address } = z
+      .object({ address: z.string().url() })
+      .strict()
+      .parse(q.body);
     const u = new URL(address);
     const host = u.hostname.replace(/^\[|\]$/g, "");
-    if (u.protocol !== "https:" || u.username || u.password || u.pathname !== "/" || u.search || u.hash || (isIP(host) && !isLocalAddress(host)))
+    if (
+      u.protocol !== "https:" ||
+      u.username ||
+      u.password ||
+      u.pathname !== "/" ||
+      u.search ||
+      u.hash ||
+      (isIP(host) && !isLocalAddress(host))
+    )
       throw new GatewayError("INVALID_ADDRESS", "Use a LAN HTTPS origin");
     const certificate = await new Promise((resolve, reject) => {
       // Inspect only: no password or HTTP request is sent before trust is selected.
-      const socket = tlsConnect({ host, port: Number(u.port || 443), lookup: localLookup, rejectUnauthorized: false }, () => {
-        const cert = socket.getPeerCertificate();
-        socket.destroy();
-        if (!cert.raw) return reject(new GatewayError("TLS_CERTIFICATE_ERROR"));
-        resolve({ fingerprint: createHash("sha256").update(cert.raw).digest("hex"), subject: cert.subject?.CN ?? "", valid_to: cert.valid_to });
-      });
-      socket.setTimeout(5000, () => socket.destroy(Error("Certificate inspection timeout")));
+      const socket = tlsConnect(
+        {
+          host,
+          port: Number(u.port || 443),
+          lookup: localLookup,
+          rejectUnauthorized: false,
+        },
+        () => {
+          const cert = socket.getPeerCertificate();
+          socket.destroy();
+          if (!cert.raw)
+            return reject(new GatewayError("TLS_CERTIFICATE_ERROR"));
+          resolve({
+            fingerprint: createHash("sha256").update(cert.raw).digest("hex"),
+            subject: cert.subject?.CN ?? "",
+            valid_to: cert.valid_to,
+          });
+        },
+      );
+      socket.setTimeout(5000, () =>
+        socket.destroy(Error("Certificate inspection timeout")),
+      );
       socket.once("error", reject);
     });
     r.json(certificate);
@@ -360,6 +402,7 @@ export async function serve(
     const i = who(r);
     core.auth.check(i, "devices:read");
     r.setHeader("Content-Type", "text/event-stream");
+    r.setHeader("X-KVMHelm-Instance", core.instanceId);
     r.setHeader("Connection", "keep-alive");
     r.flushHeaders();
     const send = (event: any) => {
@@ -374,7 +417,10 @@ export async function serve(
         if (!event.device_id) r.end();
       }
     };
-    const cursor = Number(q.headers["last-event-id"] ?? 0);
+    const cursor =
+      q.headers["x-kvmhelm-instance"] === core.instanceId
+        ? Number(q.headers["last-event-id"] ?? 0)
+        : 0;
     for (const e of core.events)
       if (e.event_id > cursor) send({ ...e, historical: true });
     core.on("event", send);
@@ -399,18 +445,16 @@ export async function serve(
     const i = who(r);
     core.auth.check(i, "devices:read");
     r.json(
-      plugins
-        .list()
-        .map((p) => ({
-          id: p.id,
-          status: p.status,
-          panels: p.panels.filter(
-            (panel: any) =>
-              !panel.device_id ||
-              i.token.devices.includes("*") ||
-              i.token.devices.includes(panel.device_id),
-          ),
-        })),
+      plugins.list().map((p) => ({
+        id: p.id,
+        status: p.status,
+        panels: p.panels.filter(
+          (panel: any) =>
+            !panel.device_id ||
+            i.token.devices.includes("*") ||
+            i.token.devices.includes(panel.device_id),
+        ),
+      })),
     );
   });
   app.post("/api/v1/plugins", async (q, r) => {
@@ -435,6 +479,7 @@ export async function serve(
       platform: process.platform,
       memory: process.memoryUsage(),
       metrics: core.metrics,
+      health: core.health(),
       devices: core.list(who(r)),
       plugins: plugins.list(),
     });
@@ -532,6 +577,7 @@ export async function serve(
           : e?.name === "ZodError"
             ? "INVALID_ARGUMENT"
             : "INTERNAL_ERROR";
+      core.recordError(code);
       r.status(
         code === "AUTH_FAILED"
           ? 401
@@ -539,9 +585,15 @@ export async function serve(
             ? 403
             : code === "NOT_FOUND"
               ? 404
-              : code === "REVISION_CONFLICT"
-                ? 409
-                : 400,
+              : code === "SESSION_LOST"
+                ? 410
+                : code === "STORAGE_ERROR"
+                  ? 503
+                  : code === "INTERNAL_ERROR"
+                    ? 500
+                    : code === "REVISION_CONFLICT"
+                      ? 409
+                      : 400,
       ).json({
         ok: false,
         error: { code, message: e instanceof GatewayError ? e.message : code },
@@ -562,6 +614,16 @@ export async function serve(
     server.once("error", reject);
     server.listen(options.port, options.host, resolve);
   });
+  if (options.port === 0) {
+    const address = server.address();
+    if (address && typeof address !== "string") {
+      origins.add(
+        `${secure ? "https" : "http"}://${options.host}:${address.port}`,
+      );
+      if (loopback)
+        origins.add(`${secure ? "https" : "http"}://localhost:${address.port}`);
+    }
+  }
   return {
     server,
     app,

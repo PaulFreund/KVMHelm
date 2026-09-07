@@ -1,8 +1,9 @@
 import WebSocket from "ws";
 import { EventEmitter } from "node:events";
-import { PiKvmDriver } from "./pikvm.js";
+import { NetworkHidDriver } from "./network-hid.js";
 import { JetPeer } from "./jet-peer.js";
 import { usbKey } from "./usb-key.js";
+import { checkIceCandidate } from "../lan-ice.js";
 import { textKeys } from "./keyboard.js";
 import { localLookup, PinnedAgent, isLocalAddress } from "../network.js";
 import {
@@ -14,7 +15,7 @@ import {
   type AudioChunk,
 } from "../../shared/contracts.js";
 /** Reuses only LAN/TLS HTTP transport and HID action planning; Jet endpoints are independent. */
-export class JetKvmDriver extends PiKvmDriver {
+export class JetKvmDriver extends NetworkHidDriver {
   private peer?: JetPeer;
   private signaling?: WebSocket;
   private pulse?: NodeJS.Timeout;
@@ -217,12 +218,7 @@ export class JetKvmDriver extends PiKvmDriver {
     }
   }
   private checkCandidate(candidate: string) {
-    const address = candidate.trim().split(/\s+/)[4];
-    if (address && !isLocalAddress(address))
-      throw new GatewayError(
-        "INVALID_ADDRESS",
-        "JetKVM ICE must use local/LAN addresses",
-      );
+    checkIceCandidate(candidate);
   }
   protected async rpc(method: string, params: unknown): Promise<any> {
     if (!this.peer) throw new GatewayError("DEVICE_OFFLINE");
@@ -304,16 +300,12 @@ export class JetKvmDriver extends PiKvmDriver {
     const frame = await this.peer.frame(signal);
     return { ...frame, signal: this.caps.video.signal };
   }
-  override async *subscribeVideo(
-    signal: AbortSignal,
-  ): AsyncIterable<DriverFrame> {
+  async *subscribeVideo(signal: AbortSignal): AsyncIterable<DriverFrame> {
     while (!signal.aborted) {
       yield await this.snapshot(signal);
     }
   }
-  override async *subscribeAudio(
-    signal: AbortSignal,
-  ): AsyncIterable<AudioChunk> {
+  async *subscribeAudio(signal: AbortSignal): AsyncIterable<AudioChunk> {
     if (!this.caps.audio.from_target || !this.peer)
       throw new GatewayError("UNSUPPORTED_ACTION");
     const queue: AudioChunk[] = [];

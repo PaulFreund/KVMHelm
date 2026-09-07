@@ -1,4 +1,4 @@
-name: POC checks
+name: Build and regression checks
 on: [push, pull_request]
 jobs:
   native:
@@ -16,6 +16,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm test
+      - run: node scripts/ui-layout.mjs
   docker:
     runs-on: ubuntu-latest
     steps:

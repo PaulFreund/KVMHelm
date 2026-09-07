@@ -6,6 +6,7 @@ import type { Server as HttpServer, IncomingMessage } from "node:http";
 import { type AudioChunk, GatewayError } from "../shared/contracts.js";
 import type { Core, Session } from "./core.js";
 import type { Identity } from "./auth.js";
+const microphoneSenders = new WeakMap<Core, Map<string, WebSocket>>();
 export class PiAudio extends EventEmitter {
   private worker?: Worker;
   private consumers = 0;
@@ -175,7 +176,12 @@ export function audioServer(
     }
   >();
   const sockets = new Set<WebSocket>();
-  const senders = new Map<string, WebSocket>();
+  let senders = microphoneSenders.get(core);
+  if (!senders) {
+    senders = new Map();
+    microphoneSenders.set(core, senders);
+  }
+  const activeSenders = senders;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16384 });
   const authorize = (i: Identity, s: Session, mic: boolean) => {
     core.session(i, s.session_id);
@@ -224,6 +230,8 @@ export function audioServer(
     sockets.add(ws);
     let entry: ReturnType<typeof tickets.get>, timer: NodeJS.Timeout;
     const abort = new AbortController();
+    const consumer = `audio:${randomBytes(16).toString("hex")}`;
+    let microphoneStart: Promise<void> | undefined;
     let micWindow = Date.now(),
       micBytes = 0;
     const unauth = setTimeout(() => ws.close(1008, "Authenticate"), 5000);
@@ -233,10 +241,16 @@ export function audioServer(
       clearInterval(timer);
       abort.abort();
       sockets.delete(ws);
-      if (entry && senders.get(entry.session.device_id) === ws) {
-        senders.delete(entry.session.device_id);
+      if (entry && activeSenders.get(entry.session.device_id) === ws) {
+        const id = entry.session.device_id;
         const device = core.devices.get(entry.session.device_id);
-        void (device?.driver as any)?.audio?.setMicrophone(false);
+        void Promise.resolve(microphoneStart)
+          .catch(() => {})
+          .then(() => device?.driver.setMicrophone?.(false))
+          .catch(() => core.recordError("AUDIO_STOP_FAILED"))
+          .finally(() => {
+            if (activeSenders.get(id) === ws) activeSenders.delete(id);
+          });
       }
     });
     ws.on("message", async (raw, binary) => {
@@ -263,13 +277,17 @@ export function audioServer(
           const { identity, session, microphone } = entry;
           const d = core.get(session.device_id);
           if (microphone) {
-            if (senders.has(session.device_id))
+            if (activeSenders.has(session.device_id))
               throw new GatewayError(
                 "CONTROL_BUSY",
                 "Microphone already active",
               );
-            senders.set(session.device_id, ws);
-            await (d.driver as any).audio.setMicrophone(true);
+            if (!d.driver.setMicrophone)
+              throw new GatewayError("UNSUPPORTED_ACTION");
+            activeSenders.set(session.device_id, ws);
+            microphoneStart = d.driver.setMicrophone(true);
+            await microphoneStart;
+            if (abort.signal.aborted) return;
           }
           timer = setInterval(() => {
             try {
@@ -280,7 +298,7 @@ export function audioServer(
           }, 250);
           if (!d.driver.subscribeAudio)
             throw new GatewayError("UNSUPPORTED_ACTION");
-          d.media.retain(`audio:${identity.client_id}`, "warm");
+          d.media.retain(consumer, "warm");
           void (async () => {
             try {
               for await (const chunk of d.driver.subscribeAudio!(
@@ -297,7 +315,7 @@ export function audioServer(
             } catch {
               ws.close(1011, "Audio source unavailable");
             } finally {
-              d.media.release(`audio:${identity.client_id}`);
+              d.media.release(consumer);
             }
           })();
           return;
@@ -311,7 +329,27 @@ export function audioServer(
         if (micBytes > 128000) throw new GatewayError("RESOURCE_LIMIT");
         authorize(entry.identity, entry.session, true);
         const d = core.get(entry.session.device_id);
-        (d.driver as any).audio.send(Buffer.from(raw as Buffer));
+        if (!d.driver.sendAudio) throw new GatewayError("UNSUPPORTED_ACTION");
+        await d.driver.sendAudio(
+          {
+            device_id: entry.session.device_id,
+            data: Buffer.from(raw as Buffer),
+            format: "pcm_s16le",
+            sample_rate: 48000,
+            channels: 1,
+            sequence: 0,
+            timestamp_ms: performance.now(),
+            connection_generation: d.media.generation,
+            discontinuity: false,
+          },
+          {
+            signal: abort.signal,
+            width: 0,
+            height: 0,
+            assertControl: () =>
+              authorize(entry!.identity, entry!.session, true),
+          },
+        );
       } catch {
         ws.close(1008, "Audio authorization or source failed");
       }

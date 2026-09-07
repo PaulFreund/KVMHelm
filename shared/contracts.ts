@@ -38,6 +38,116 @@ export const deviceSchema = z
   })
   .strict();
 export type Device = z.infer<typeof deviceSchema> & { device_id: string };
+export interface LeaseView {
+  session_id: string;
+  client_id: string;
+  expires_at: number;
+}
+export interface SessionView {
+  session_id: string;
+  owner_id: string;
+  client_id: string;
+  device_id: string;
+  mode: "observe" | "control";
+  expires_at: number;
+  connection_generation: number;
+  journal_remaining: number;
+}
+export interface DeviceView extends Device {
+  status: string;
+  error?: string;
+  capabilities: Capabilities | null;
+  lease: LeaseView | null;
+  control_suspended: boolean;
+  consumers: { id: string; profile: string }[];
+  media: {
+    strategy: string;
+    metrics: {
+      frames: number;
+      dropped: number;
+      bytes: number;
+      snapshot_ms: number[];
+      frame_intervals_ms: number[];
+    };
+    frame_age_ms: number | null;
+  };
+}
+export interface GatewayFailure {
+  code: string;
+  message: string;
+}
+export interface ToolBody {
+  ok: boolean;
+  error?: GatewayFailure;
+  frames?: FrameInfo[];
+  session?: SessionView;
+  journal_remaining?: number;
+  session_closed?: boolean;
+  lease?: LeaseView | null;
+  [key: string]: unknown;
+}
+export interface ToolEnvelope {
+  [key: string]: unknown;
+  isError: boolean;
+  structuredContent: ToolBody & { frames: FrameInfo[] };
+  content: (
+    | { type: "text"; text: string }
+    | { type: "image"; mimeType: string; data: string }
+  )[];
+}
+export interface GatewayEvent {
+  event_id: number;
+  instance_id: string;
+  type: string;
+  device_id?: string;
+  at: number;
+  data: Record<string, unknown>;
+  historical?: boolean;
+}
+export interface TokenView {
+  id: string;
+  name: string;
+  scopes: string[];
+  devices: string[];
+  revoked: boolean;
+  expires_at: number | null;
+  created_at: number;
+  last_used: number | null;
+  revision: number;
+}
+export interface MeView {
+  owner_id: string;
+  csrf?: string;
+  token: TokenView;
+}
+export interface Preferences {
+  revision: number;
+  sidebar: boolean;
+  theme: "light" | "dark";
+  selected: string;
+  order: string[];
+  visible: string[];
+  tile_size: number;
+}
+export interface PluginPanel {
+  id: string;
+  title: string;
+  text: string;
+  device_id?: string;
+  slot: "kvm.sidepanel" | "settings.plugins" | "overview.badge";
+}
+export interface ExtensionView {
+  id: string;
+  status: string;
+  panels: PluginPanel[];
+}
+export interface PluginView extends ExtensionView {
+  version: string;
+  enabled: boolean;
+  devices: string[];
+  revision: number;
+  manifest: { permissions: string[] };
+}
 export interface Capabilities {
   video: {
     snapshot: boolean;
@@ -158,6 +268,16 @@ export const toolSchemas = {
   close_computer: z.object({ session_id: z.string() }).strict(),
 };
 export type ToolName = keyof typeof toolSchemas;
+export type ToolRequest = {
+  [K in ToolName]: { name: K; args: z.infer<(typeof toolSchemas)[K]> };
+}[ToolName];
+export function parseTool(name: ToolName, input: unknown): ToolRequest {
+  return { name, args: toolSchemas[name].parse(input) } as ToolRequest;
+}
+export interface DeviceCredentials {
+  username?: string;
+  password?: string;
+}
 export interface FrameInfo {
   frame_id: string;
   view_id: string;
@@ -220,6 +340,7 @@ export interface KvmDriver {
   validate(actions: ComputerAction[], width: number, height: number): void;
   releaseAllInputs(): Promise<void>;
   subscribeAudio?(signal: AbortSignal): AsyncIterable<AudioChunk>;
+  setMicrophone?(enabled: boolean): Promise<void>;
   sendAudio?(chunk: AudioChunk, context: ActionContext): Promise<void>;
 }
 export class GatewayError extends Error {

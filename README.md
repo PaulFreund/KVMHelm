@@ -30,12 +30,12 @@ node dist/server/cli.js device benchmark DEVICE_ID
 
 ## Unterstützte Geräte
 
-| Gerät | Treiber | Eingabe / Video |
-|---|---|---|
-| PiKVM v4 Mini / Plus | `pikvm-v4` | Persistenter KVMD-WebSocket, Snapshot / MJPEG |
-| JetKVM | `jetkvm` | Persistenter WebRTC-RPC-Kanal, H.264 → JPEG |
-| GL.iNet Comet GL-RM1 | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks |
-| GL.iNet Comet Pro GL-RM10 | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks |
+| Gerät                     | Treiber        | Eingabe / Video                               |
+| ------------------------- | -------------- | --------------------------------------------- |
+| PiKVM v4 Mini / Plus      | `pikvm-v4`     | Persistenter KVMD-WebSocket, Snapshot / MJPEG |
+| JetKVM                    | `jetkvm`       | Persistenter WebRTC-RPC-Kanal, H.264 → JPEG   |
+| GL.iNet Comet GL-RM1      | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks          |
+| GL.iNet Comet Pro GL-RM10 | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks          |
 
 JetKVM nutzt natives WebRTC und einen dauerhaften FFmpeg-Prozess für H.264 → JPEG. Das passende FFmpeg-Binary wird bei der Installation automatisch bereitgestellt. Ein eigenes Binary kann über `KVMHELM_FFMPEG` gewählt werden. PiKVM und Comet benötigen keinen Videodecoder. Details: [Gerätetreiber](docs/device-drivers.md).
 
@@ -60,7 +60,7 @@ npx playwright install chromium # nur für die WebRTC-Testgegenstelle
 npm test
 ```
 
-Die fokussierten Tests prüfen Steuerungsarbitrierung, Wiederholungen, ungültige Ansichten, Berechtigungen, Präferenzrevisionen, Layouts, beide MCP-Transporte und den PiKVM-Treiber gegen einen lokalen Protokollserver. Nach lokalem Bootstrap/Demo/Dienststart lässt sich der Browsercheck mit `node scripts/ui-smoke.mjs` wiederholen; dafür einmal `npx playwright install chromium` ausführen. Der Prüfstand steht in `docs/verification.md`. Der isolierte Check `node scripts/ui-layout.mjs` prüft eine leere Installation, Reihenfolge, Farbschemata und dauerhafte Browseranmeldung. Eine CI-Vorlage liegt unter `.github/ci-template.yml`; für automatische GitHub Actions muss sie mit einer workflow-berechtigten Anmeldung nach `.github/workflows/ci.yml` verschoben werden.
+Die fokussierten Tests prüfen Steuerungsarbitrierung, Wiederholungen, ungültige Ansichten, Berechtigungen, Präferenzrevisionen, Layouts, beide MCP-Transporte und den PiKVM-Treiber gegen einen lokalen Protokollserver. Nach lokalem Bootstrap/Demo/Dienststart lässt sich der Browsercheck mit `node scripts/ui-smoke.mjs` wiederholen; dafür einmal `npx playwright install chromium` ausführen. Der Prüfstand steht in `docs/verification.md`. Der isolierte Check `node scripts/ui-layout.mjs` prüft eine leere Installation, Reihenfolge, Farbschemata und dauerhafte Browseranmeldung. GitHub Actions führt `.github/workflows/ci.yml` bei Push und Pull Request aus: Build, Regressionstests und isolierte Browserprüfung unter Windows, Linux und macOS sowie ein Docker-Build.
 
 ## Computer Use über MCP
 
@@ -140,6 +140,8 @@ SQLite enthält Gerätekonfiguration, Token-Hashes und gemeinsame UI-Präferenze
 
 Für ein konsistentes Backup den Daemon stoppen und den Konfigurationsordner sowie separat verschlüsselt den Secretordner sichern. Restore bei gestopptem Daemon mit derselben Version; abgeleitete Sessions und Leases überleben keinen Neustart. Schema v1 wird geprüft, unbekannte neuere Schemata müssen abgewiesen werden. Künftige Schemaänderungen benötigen vorher ein Backup und einen versionierten Migrationspfad.
 
-Keine feste Grenze von vier Geräten. POC-Ressourcenlimits: standardmäßig 128 Sessions (`KVMHELM_MAX_SESSIONS`), 64 MiB Replaybilder (`KVMHELM_REPLAY_MB`), 8 MiB pro vollständigem Bild, 16 Megapixel, 64 wartende Aufträge pro Gerät, 32 Aktionen/30 Sekunden/4 Bilder pro Batch. Alte Replaybilder dürfen aus dem RAM fallen; der gespeicherte Ausführungsstatus bleibt erhalten und weist auf notwendige neue Beobachtung hin. Journale sind auf 256 IDs pro Session begrenzt; danach neue Session öffnen.
+Keine feste Grenze von vier Geräten. POC-Ressourcenlimits: standardmäßig 128 Sessions insgesamt (`KVMHELM_MAX_SESSIONS`), höchstens 32 je Token, 64 MiB Replaybilder (`KVMHELM_REPLAY_MB`), 8 MiB pro vollständigem Bild, 16 Megapixel, 64 wartende Aufträge pro Gerät, 32 Aktionen/30 Sekunden/4 Bilder pro Batch. Alte Replaybilder dürfen aus dem RAM fallen; der gespeicherte Ausführungsstatus bleibt erhalten und weist auf notwendige neue Beobachtung hin. Journale sind auf 256 IDs pro Session begrenzt; danach neue Session öffnen. Die Weboberfläche wechselt vor Erreichen der Grenze geordnet die Session. Eine Freigabe bei vollem Journal schließt die Session sicher.
 
 **Nicht implementiert:** weitere Herstelleradapter, USB-KVM, Recorder, Power/Reset, Virtual Media, Dateitransfer, Webcam-Emulation. Die zukünftigen Verträge stehen in [Architektur](docs/architecture.md). Eine Nutzungslizenz ist noch nicht festgelegt; die npm-Veröffentlichung ist deaktiviert.
+
+Betrieb und Fehlerbehandlung: [Robustheit und Regressionstests](docs/reliability.md).

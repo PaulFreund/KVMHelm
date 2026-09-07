@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { PiKvmDriver } from "./pikvm.js";
+import { NetworkHidDriver } from "./network-hid.js";
 import {
   type Device,
   type Capabilities,
@@ -7,13 +7,16 @@ import {
   type ComputerAction,
   type ActionContext,
 } from "../../shared/contracts.js";
-export class Simulator extends PiKvmDriver {
+export class Simulator extends NetworkHidDriver {
   count = 0;
   private marker = Math.random().toString(36).slice(2, 10);
   constructor(d: Device) {
     super(d, {});
   }
   override async connect() {}
+  protected async event() {
+    throw new Error("Simulator does not emit physical HID events");
+  }
   override async disconnect() {}
   override async capabilities(): Promise<Capabilities> {
     return {

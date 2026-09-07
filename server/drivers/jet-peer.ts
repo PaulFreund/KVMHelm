@@ -8,6 +8,7 @@ import {
 import OpusScript from "opusscript";
 import { H264Assembler, H264Decoder } from "./h264.js";
 import { GatewayError, type DriverFrame } from "../../shared/contracts.js";
+import { localIceOnly } from "../lan-ice.js";
 /** Persistent native WebRTC peer. Only H.264 decoding/encoding runs in FFmpeg. */
 export class JetPeer extends EventEmitter {
   private pc = new RTCPeerConnection({
@@ -127,8 +128,7 @@ export class JetPeer extends EventEmitter {
   async offer() {
     await this.decoder.start();
     // werift supplies a public STUN default even with iceServers: []; keep LAN-only gathering.
-    for (const transport of this.pc.iceTransports)
-      transport.connection.stunServer = undefined;
+    localIceOnly(this.pc);
     await this.pc.setLocalDescription(await this.pc.createOffer());
     return Buffer.from(
       JSON.stringify({ type: "offer", sdp: this.pc.localDescription!.sdp }),

@@ -51,10 +51,10 @@ export class Media extends EventEmitter {
     this.consumers.delete(id);
     if (!this.consumers.size) this.controller?.abort();
   }
-  ingest(raw: DriverFrame) {
+  ingest(raw: DriverFrame, revision = this.revision) {
     if (raw.data.length > this.budget || raw.width * raw.height > 16777216)
       throw new GatewayError("RESOURCE_LIMIT", "Frame budget exceeded");
-    const shape = `${raw.width}:${raw.height}`;
+    const shape = `${raw.width}:${raw.height}:${raw.mime_type}`;
     if (this.lastShape !== shape) {
       this.view = randomUUID();
       this.lastShape = shape;
@@ -75,7 +75,7 @@ export class Media extends EventEmitter {
         view_id: this.view,
         device_id: this.device_id,
         connection_generation: this.generation,
-        input_revision: this.revision,
+        input_revision: revision,
         width: raw.width,
         height: raw.height,
         mime_type: raw.mime_type,
@@ -104,7 +104,6 @@ export class Media extends EventEmitter {
       data: f.data,
       info: {
         ...f.info,
-        input_revision: this.revision,
         received_age_ms: age,
         estimated_capture_age_ms:
           f.info.source_timestamp === null
@@ -122,13 +121,17 @@ export class Media extends EventEmitter {
   private capture() {
     if (!this.pending) {
       const start = performance.now();
+      const revision = this.revision,
+        generation = this.generation;
       this.pending = this.driver
         .snapshot(AbortSignal.timeout(5000))
         .then((f) => {
           this.metrics.snapshot_ms.push(performance.now() - start);
           if (this.metrics.snapshot_ms.length > 64)
             this.metrics.snapshot_ms.shift();
-          return this.ingest(f);
+          if (generation !== this.generation)
+            throw new GatewayError("VIEW_CHANGED");
+          return this.ingest(f, revision);
         })
         .finally(() => {
           this.pending = undefined;
@@ -141,6 +144,7 @@ export class Media extends EventEmitter {
     if (
       !after &&
       this.latest &&
+      this.latest.info.input_revision === this.revision &&
       cutoff - this.latest.info.received_at_monotonic_ms <= maxAge &&
       this.latest.info.signal !== "absent"
     )
@@ -158,10 +162,15 @@ export class Media extends EventEmitter {
             })
           : (async () => {
               // A capture already in flight may predate the action/image deadline.
-              if (after && this.pending) await this.pending;
+              if (
+                this.pending &&
+                (after || this.latest?.info.input_revision !== this.revision)
+              )
+                await this.pending;
               return this.capture();
             })().then(async (f) =>
-              after && f.info.received_at_monotonic_ms < cutoff
+              (after && f.info.received_at_monotonic_ms < cutoff) ||
+              f.info.input_revision !== this.revision
                 ? this.capture()
                 : f,
             ),

@@ -1,11 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { toolSchemas, type ToolName } from "../shared/contracts.js";
+import {
+  toolSchemas,
+  type ToolName,
+  type ToolEnvelope,
+} from "../shared/contracts.js";
 import { type ToolResult, Core } from "./core.js";
 import { type Identity } from "./auth.js";
 export const descriptions: Record<ToolName, string> = {
-  list_computers:
-    "List available computers and capabilities.",
+  list_computers: "List available computers and capabilities.",
   open_computer:
     "Open an observe or exclusive control session and get its screen; control requires request_id.",
   computer:
@@ -14,12 +17,11 @@ export const descriptions: Record<ToolName, string> = {
     "Get the current screen without input; max_age_ms allows a cached image.",
   computer_control:
     "Acquire, renew or release exclusive control of your session.",
-  close_computer:
-    "Close your session and release control.",
+  close_computer: "Close your session and release control.",
 };
 export const instructions =
   "Use list_computers, then open_computer. Observe, act in short batches, observe again. Coordinates are pixels in the returned image. Copy frame_id, view_id and input_revision from the latest frame into computer.reference. After acquiring control separately, get a new screenshot. Use a new request_id per operation; reuse it only for an identical retry. Never blindly repeat uncertain input. Close sessions when finished.";
-export function pack(result: ToolResult) {
+export function pack(result: ToolResult): ToolEnvelope {
   const { images = [], ...body } = result;
   const structuredContent = {
     ...body,
@@ -39,7 +41,10 @@ export function pack(result: ToolResult) {
   };
 }
 export function mcpServer(core: Core, identity: Identity) {
-  const server = new McpServer({ name: "KVMHelm", version: "0.1.0" }, { instructions });
+  const server = new McpServer(
+    { name: "KVMHelm", version: "0.1.0" },
+    { instructions },
+  );
   for (const name of Object.keys(toolSchemas) as ToolName[])
     server.registerTool(
       name,

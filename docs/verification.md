@@ -16,7 +16,7 @@ Der geprüfte PiKVM-Quellstand ist `pikvm/kvmd@387846d22fa807f97de09750c32c1c9b2
 | Web-UI                                    | Lokaler Browser: Login, Simulatorbild, Kontrolle, Videowand, Präferenzspeicherung               |
 | PiKVM                                     | Herstellerprotokoll anhand offizieller Dokumentation/Quellcode; reale v4 Mini/Plus erforderlich |
 | Audio                                     | Janus/Opus/PCM-Pfad implementiert; echte Geräte-/Mikrofon-/ICE-Abnahme erforderlich             |
-| Linux/macOS                               | Inaktive CI-Vorlage vorhanden; lokal nur Windows geprüft                         |
+| Linux/macOS                               | Aktiver Workflow für Windows/Linux/macOS; lokaler Prüfstand weiterhin Windows                   |
 | Docker                                    | Build-/LAN-/Audio-Abnahme auf Docker Engine/Desktop erforderlich                                |
 | Codex/ChatGPT Desktop                     | Reale verfügbare Hostversionen müssen Zufallstext ausschließlich aus dem MCP-Bild erkennen      |
 
@@ -33,3 +33,9 @@ Referenzquellen, geprüft am 7. September 2026:
 - [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) – PAT-Konfigurationsprofil.
 
 Die konkrete externe Host-/Firmwarekompatibilität bleibt bis zum jeweiligen Integrationstest unbestätigt. JetKVM und beide Comet-Modelle sind implementiert; Protokollquellen, Installationsweg und Grenzen stehen unter [Gerätetreiber](device-drivers.md).
+
+## Review-Härtung
+
+Die Review-Korrekturen und zusätzlichen Fehlerprüfungen sind in [reliability.md](reliability.md) beschrieben. Die Testsuite umfasst jetzt auch Browser-Recovery bei neuem Core, lokale Tastatureingaben, Journalrotation, Request-Limits und Sicherheitsrouten, Datenbank-Workerfehler, Secretbereinigung, Plugin-Abonnement-Lifecycle, LAN-ICE und den Audio-Treibervertrag. Der aktuelle vollständige Prüflauf ist vor jedem Release auszuführen; Hardwareabnahmen bleiben separat.
+
+Verifiziert am 7. September 2026 unter Windows mit Node 24.18.0: `npm run build` erfolgreich, `npm test` mit 28 erfolgreichen Tests ohne Fehler oder übersprungene Tests sowie `node scripts/ui-layout.mjs` erfolgreich. Die Layoutprüfung bestätigt insbesondere die unveränderte dauerhafte PAT-Anmeldung über Browser-/Daemon-Neustarts und das Entfernen des Browser-Tokens beim Logout. Physische Geräte und Docker wurden in diesem lokalen Lauf nicht geprüft.

@@ -76,9 +76,11 @@ async function main() {
     const { client } = await upstream.connect();
     const server = new Server(
       { name: "KVMHelm", version: "0.1.0" },
-        { capabilities: { tools: {} }, instructions: client.getInstructions() },
+      { capabilities: { tools: {} }, instructions: client.getInstructions() },
     );
-    server.setRequestHandler(ListToolsRequestSchema, () => upstream.listTools());
+    server.setRequestHandler(ListToolsRequestSchema, () =>
+      upstream.listTools(),
+    );
     server.setRequestHandler(
       CallToolRequestSchema,
       async (req) => (await upstream.callTool(req.params)) as any,
@@ -169,7 +171,7 @@ async function main() {
     else console.log(await api(`/plugins/${a[2]}/${a[1]}`, "POST", {}));
     return;
   }
-  if (!["serve", "demo", "token"].includes(command)) {
+  if (!["serve", "demo", "token", "secrets"].includes(command)) {
     console.log(
       "KVMHelm\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  plugin list|install <directory>|enable|disable|uninstall\n  doctor\nUse --data and --secrets for separate protected storage locations.",
     );
@@ -180,6 +182,20 @@ async function main() {
   const secrets = await Secrets.open(secretDir),
     auth = new Auth(store);
   await auth.load();
+  if (command === "secrets") {
+    try {
+      if (a[1] !== "cleanup")
+        throw Error("Use secrets cleanup with the daemon stopped");
+      const references = new Set<string>();
+      for (const device of await store.list("devices"))
+        for (const ref of [device.secret_ref, device.tls.ca_ref])
+          if (ref) references.add(ref);
+      console.log(JSON.stringify({ deleted: await secrets.prune(references) }));
+    } finally {
+      await store.close();
+    }
+    return;
+  }
   if (command === "token") {
     if (a[1] !== "bootstrap") throw Error("Unknown command");
     const token = await auth.create({
@@ -222,14 +238,22 @@ async function main() {
     origins: v.origin ?? [],
     dev: v.dev,
   });
-  const lanInstance = v["lan-host"] ? await serve(core, plugins, {
-    host: v["lan-host"], port: Number(v["lan-port"] ?? 8766),
-    cert: v.cert, key: v.key, origins: v.origin ?? [],
-  }) : undefined;
+  const lanInstance = v["lan-host"]
+    ? await serve(core, plugins, {
+        host: v["lan-host"],
+        port: Number(v["lan-port"] ?? 8766),
+        cert: v.cert,
+        key: v.key,
+        origins: v.origin ?? [],
+      })
+    : undefined;
   console.error(
     `KVMHelm listening on ${v.cert && !v["lan-host"] ? "https" : "http"}://${v.host ?? "127.0.0.1"}:${v.port ?? 8765}`,
   );
-  if (lanInstance) console.error(`KVMHelm LAN listening on https://${v["lan-host"]}:${v["lan-port"] ?? 8766}`);
+  if (lanInstance)
+    console.error(
+      `KVMHelm LAN listening on https://${v["lan-host"]}:${v["lan-port"] ?? 8766}`,
+    );
   let stopping = false;
   const stop = async () => {
     if (stopping) return;

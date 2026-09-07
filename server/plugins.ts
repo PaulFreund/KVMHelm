@@ -1,9 +1,10 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { readFile, mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Core } from "./core.js";
-import { GatewayError } from "../shared/contracts.js";
+import { GatewayError, type PluginPanel } from "../shared/contracts.js";
 export const manifestSchema = z
   .object({
     id: z.string().regex(/^[a-zA-Z0-9._-]+$/),
@@ -27,17 +28,19 @@ export const manifestSchema = z
       .default([]),
   })
   .strict();
-interface Loaded {
+export interface PluginRecord {
   id: string;
   path: string;
   manifest: z.infer<typeof manifestSchema>;
   devices: string[];
   enabled: boolean;
   revision: number;
+}
+interface Loaded extends PluginRecord {
   status: string;
   process?: ChildProcess;
   subscriptions: Map<string, AbortController>;
-  panels: unknown[];
+  panels: PluginPanel[];
   lastHealth: number;
 }
 export class PluginHost {
@@ -145,6 +148,7 @@ export class PluginHost {
       p.status = "error";
     });
     child.on("exit", () => {
+      if (p.process !== child) return;
       p.process = undefined;
       for (const c of p.subscriptions.values()) c.abort();
       p.subscriptions.clear();
@@ -157,7 +161,11 @@ export class PluginHost {
     child.on(
       "message",
       (m) =>
-        void this.message(p, m).catch(() => {
+        void (
+          p.process === child && p.status !== "disabled"
+            ? this.message(p, m)
+            : Promise.resolve()
+        ).catch(() => {
           child.send({ type: "error", code: "PLUGIN_REQUEST_REJECTED" });
         }),
     );
@@ -259,11 +267,25 @@ export class PluginHost {
         device_id,
       );
       if (p.subscriptions.size >= 64) throw new GatewayError("RESOURCE_LIMIT");
+      if (p.subscriptions.has(id))
+        throw new GatewayError(
+          "REQUEST_CONFLICT",
+          "Subscription ID is already active",
+        );
       const d = this.core.get(device_id);
-      await this.core.connect(d);
       const controller = new AbortController();
       p.subscriptions.set(id, controller);
-      const consumer = `plugin:${p.id}:${id}`;
+      try {
+        await this.core.connect(d);
+      } catch (e) {
+        if (p.subscriptions.get(id) === controller) p.subscriptions.delete(id);
+        throw e;
+      }
+      if (controller.signal.aborted || !p.enabled) {
+        if (p.subscriptions.get(id) === controller) p.subscriptions.delete(id);
+        return;
+      }
+      const consumer = `plugin:${p.id}:${id}:${randomUUID()}`;
       d.media.retain(consumer, "warm");
       const send = (chunk: any) => {
         if (!p.enabled || controller.signal.aborted) return false;
@@ -301,14 +323,16 @@ export class PluginHost {
             }
           }
         } catch (e) {
-          p.process?.send({
-            type: "gap",
-            id,
-            code: e instanceof GatewayError ? e.code : "SOURCE_UNAVAILABLE",
-          });
+          if (p.subscriptions.get(id) === controller)
+            p.process?.send({
+              type: "gap",
+              id,
+              code: e instanceof GatewayError ? e.code : "SOURCE_UNAVAILABLE",
+            });
         } finally {
           d.media.release(consumer);
-          p.subscriptions.delete(id);
+          if (p.subscriptions.get(id) === controller)
+            p.subscriptions.delete(id);
         }
       })();
       return;

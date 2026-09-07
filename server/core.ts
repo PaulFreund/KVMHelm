@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   type Device,
@@ -7,9 +8,15 @@ import {
   type Frame,
   type ToolName,
   type Capabilities,
+  type ToolBody,
+  type DeviceView,
+  type SessionView,
+  type GatewayEvent,
   deviceSchema,
   toolSchemas,
   GatewayError,
+  parseTool,
+  type DeviceCredentials,
 } from "../shared/contracts.js";
 import { type Identity, Auth } from "./auth.js";
 import { Store, Secrets } from "./store.js";
@@ -56,13 +63,12 @@ export interface Runtime {
   failures: number;
   releasing?: Promise<void>;
   lastInputCompletedAt?: number;
+  closing?: boolean;
 }
-export interface ToolResult {
-  ok: boolean;
-  [key: string]: unknown;
+export interface ToolResult extends ToolBody {
   images?: Frame[];
 }
-const stable = (v: any): string =>
+const stable = (v: unknown): string =>
   v === null || typeof v !== "object"
     ? JSON.stringify(v)
     : Array.isArray(v)
@@ -70,15 +76,44 @@ const stable = (v: any): string =>
       : "{" +
         Object.keys(v)
           .sort()
-          .map((k) => JSON.stringify(k) + ":" + stable(v[k]))
+          .map(
+            (k) =>
+              JSON.stringify(k) +
+              ":" +
+              stable((v as Record<string, unknown>)[k]),
+          )
           .join(",") +
         "}";
 export class Core extends EventEmitter {
   devices = new Map<string, Runtime>();
   sessions = new Map<string, Session>();
-  factories = new Map<string, (d: Device, s: any, ca?: string) => KvmDriver>();
-  events: any[] = [];
+  factories = new Map<
+    string,
+    (d: Device, s: DeviceCredentials, ca?: string) => KvmDriver
+  >();
+  events: GatewayEvent[] = [];
   sequence = 0;
+  readonly instanceId = randomUUID();
+  private opening = new Map<string, number>();
+  private eventLoop = monitorEventLoopDelay({ resolution: 20 });
+  private errors: Record<string, number> = {};
+  recordError(code: string) {
+    if (Object.keys(this.errors).length < 64 || code in this.errors)
+      this.errors[code] = (this.errors[code] ?? 0) + 1;
+  }
+  health() {
+    return {
+      store: this.store.state,
+      sessions: this.sessions.size,
+      event_loop_p95_ms: this.eventLoop.percentile(95) / 1e6,
+      errors: { ...this.errors },
+      queues: [...this.devices.values()].map((r) => ({
+        device_id: r.device.device_id,
+        pending: r.pending,
+        reconnect_failures: r.failures,
+      })),
+    };
+  }
   private opens = new Map<
     string,
     Map<string, { hash: string; result: Promise<ToolResult> }>
@@ -98,20 +133,28 @@ export class Core extends EventEmitter {
     public leaseMs = 120000,
   ) {
     super();
+    this.eventLoop.enable();
     this.factories.set("pikvm-v4", (d, s, ca) => new PiKvmDriver(d, s, ca));
     this.factories.set("jetkvm", (d, s, ca) => new JetKvmDriver(d, s, ca));
     this.factories.set("glinet-comet", (d, s, ca) => new CometDriver(d, s, ca));
     this.factories.set("simulator", (d) => new Simulator(d));
-    this.sweep = setInterval(() => void this.tick(), 1000);
+    this.sweep = setInterval(
+      () =>
+        void this.tick().catch(() =>
+          this.event("core.error", undefined, { code: "SWEEP_FAILED" }),
+        ),
+      1000,
+    );
     auth.onRevoke = async (id) => {
       for (const s of [...this.sessions.values()])
         if (s.token_id === id) await this.close(s);
       this.event("token.revoked", undefined, { token_id: id });
     };
   }
-  event(type: string, device_id?: string, data: unknown = {}) {
+  event(type: string, device_id?: string, data: Record<string, unknown> = {}) {
     const e = {
       event_id: ++this.sequence,
+      instance_id: this.instanceId,
       type,
       device_id,
       at: Date.now(),
@@ -128,9 +171,9 @@ export class Core extends EventEmitter {
     d = { ...d, minimum_action_latency_ms: d.minimum_action_latency_ms ?? 30 };
     const factory = this.factories.get(d.driver_id);
     if (!factory) throw new GatewayError("UNSUPPORTED_DRIVER");
-    const secret = await this.secrets.get(d.secret_ref);
+    const secret = await this.secrets.get<DeviceCredentials>(d.secret_ref);
     const ca = d.tls.ca_ref
-      ? (await this.secrets.get(d.tls.ca_ref)).pem
+      ? (await this.secrets.get<{ pem: string }>(d.tls.ca_ref)).pem
       : undefined;
     const driver = factory(d, secret, ca);
     const media = new Media(d.device_id, driver);
@@ -161,11 +204,16 @@ export class Core extends EventEmitter {
     media.on("frame", () => {
       if (r.status === "ready" && r.media.latest?.info.signal === "absent")
         r.status = "no_signal";
-      else if (r.status === "no_signal") r.status = "ready";
+      else if (
+        r.status === "no_signal" &&
+        r.media.latest?.info.signal !== "absent"
+      )
+        r.status = "ready";
     });
     this.devices.set(d.device_id, r);
   }
   async connect(r: Runtime) {
+    if (r.closing) throw new GatewayError("DEVICE_OFFLINE");
     if (!r.device.enabled)
       throw new GatewayError("DEVICE_OFFLINE", "Device disabled");
     if (r.status === "ready" || r.status === "no_signal") return;
@@ -181,6 +229,7 @@ export class Core extends EventEmitter {
         await r.media.pause();
         if (r.media.generation) await r.driver.disconnect();
         await r.driver.connect(AbortSignal.timeout(7000));
+        if (r.closing) throw new GatewayError("DEVICE_OFFLINE");
         r.caps = await r.driver.capabilities();
         r.media.reconnect();
         r.media.resume();
@@ -202,8 +251,21 @@ export class Core extends EventEmitter {
       } catch (e) {
         r.status = "error";
         r.error = e instanceof GatewayError ? e.code : "DEVICE_OFFLINE";
-        for (let cause: any = e, depth = 0; cause && depth < 5; cause = cause.cause, depth++) {
-          if (["DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID", "CERT_HAS_EXPIRED"].includes(cause.code))
+        for (
+          let cause: any = e, depth = 0;
+          cause && depth < 5;
+          cause = cause.cause, depth++
+        ) {
+          if (
+            [
+              "DEPTH_ZERO_SELF_SIGNED_CERT",
+              "SELF_SIGNED_CERT_IN_CHAIN",
+              "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+              "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+              "ERR_TLS_CERT_ALTNAME_INVALID",
+              "CERT_HAS_EXPIRED",
+            ].includes(cause.code)
+          )
             r.error = "TLS_CERTIFICATE_ERROR";
         }
         r.retryAt =
@@ -223,7 +285,7 @@ export class Core extends EventEmitter {
     if (!r) throw new GatewayError("DEVICE_OFFLINE", "Unknown device");
     return r;
   }
-  describe(r: Runtime) {
+  describe(r: Runtime): DeviceView {
     return {
       ...r.device,
       status: r.status,
@@ -302,20 +364,36 @@ export class Core extends EventEmitter {
       );
     if (secret === null) delete parsed.secret_ref;
     if (ca === null) delete parsed.tls.ca_ref;
-    if (ca) {
-      parsed.tls.ca_ref = `ca-${randomUUID()}`;
-      await this.secrets.set(parsed.tls.ca_ref, { pem: ca });
+    const created: string[] = [];
+    let writingConfig = false;
+    let d: Device;
+    try {
+      if (ca) {
+        parsed.tls.ca_ref = "ca-" + randomUUID();
+        created.push(parsed.tls.ca_ref);
+        await this.secrets.set(parsed.tls.ca_ref, { pem: ca });
+      }
+      if (secret) {
+        parsed.secret_ref = id + "-" + randomUUID();
+        created.push(parsed.secret_ref);
+        await this.secrets.set(parsed.secret_ref, secret);
+      }
+      writingConfig = true;
+      d = await this.store.put(
+        "devices",
+        id,
+        { ...parsed, device_id: id },
+        parsed.revision,
+      );
+    } catch (e) {
+      // A lost commit response is ambiguous: preserve files for offline cleanup.
+      if (
+        !writingConfig ||
+        (e instanceof GatewayError && e.code === "REVISION_CONFLICT")
+      )
+        await Promise.all(created.map((ref) => this.secrets.delete(ref)));
+      throw e;
     }
-    if (secret) {
-      parsed.secret_ref = `${id}-${randomUUID()}`;
-      await this.secrets.set(parsed.secret_ref, secret);
-    }
-    const d = await this.store.put(
-      "devices",
-      id,
-      { ...parsed, device_id: id },
-      parsed.revision,
-    );
     const old = this.devices.get(id);
     if (old) await this.unmount(old);
     await this.mount(d);
@@ -327,9 +405,13 @@ export class Core extends EventEmitter {
     return this.describe(this.get(id));
   }
   async unmount(r: Runtime) {
+    r.closing = true;
+    r.abort?.abort();
+    await r.connecting?.catch(() => {});
     for (const s of [...this.sessions.values()])
       if (s.device_id === r.device.device_id) await this.close(s);
     await r.media.stop();
+    await r.tail;
     await r.driver.disconnect();
     this.devices.delete(r.device.device_id);
   }
@@ -348,12 +430,19 @@ export class Core extends EventEmitter {
       );
     await this.store.delete("devices", id, revision);
     await this.unmount(r);
+    for (const ref of [r.device.secret_ref, r.device.tls.ca_ref])
+      if (ref) await this.secrets.delete(ref);
     this.event("device.deleted", id);
   }
   session(i: Identity, id: string) {
     this.auth.check(i);
     const s = this.sessions.get(id);
-    if (!s || s.client_id !== i.client_id || s.token_id !== i.token.id)
+    if (!s)
+      throw new GatewayError(
+        "SESSION_LOST",
+        "Session expired or daemon restarted; open a new observation session",
+      );
+    if (s.client_id !== i.client_id || s.token_id !== i.token.id)
       throw new GatewayError(
         "FORBIDDEN",
         "Session does not belong to this client",
@@ -453,12 +542,17 @@ export class Core extends EventEmitter {
     await this.connect(r);
     // A fixed deadline follows the latest input; observations never restart it.
     if (r.lastInputCompletedAt !== undefined) {
-      const deadline = r.lastInputCompletedAt + (r.device.minimum_action_latency_ms ?? 30);
+      const deadline =
+        r.lastInputCompletedAt + (r.device.minimum_action_latency_ms ?? 30);
       while (performance.now() < deadline)
-        await delay(Math.ceil(deadline - performance.now()), undefined, { signal: r.abort?.signal });
+        await delay(Math.ceil(deadline - performance.now()), undefined, {
+          signal: r.abort?.signal,
+        });
       // Cached frames received before the deadline cannot represent this observation.
       maxAge = Math.min(maxAge, Math.max(0, performance.now() - deadline));
-      after ||= !r.media.latest || r.media.latest.info.received_at_monotonic_ms < deadline;
+      after ||=
+        !r.media.latest ||
+        r.media.latest.info.received_at_monotonic_ms < deadline;
     }
     const f = await r.media.screenshot(maxAge, timeout, after);
     this.auth.check(i, "video:read", s.device_id);
@@ -522,6 +616,7 @@ export class Core extends EventEmitter {
     return result;
   }
   error(e: unknown): ToolResult {
+    this.recordError(e instanceof GatewayError ? e.code : "EXECUTION_UNKNOWN");
     return {
       ok: false,
       error: {
@@ -537,8 +632,8 @@ export class Core extends EventEmitter {
   async tool(i: Identity, name: ToolName, input: unknown): Promise<ToolResult> {
     try {
       this.auth.check(i);
-      const a: any = toolSchemas[name].parse(input);
-      if (name === "list_computers")
+      const { name: operation, args: a } = parseTool(name, input);
+      if (operation === "list_computers")
         return {
           ok: true,
           computers: this.list(i).filter(
@@ -547,7 +642,7 @@ export class Core extends EventEmitter {
               a.tags.every((t: string) => d.tags.includes(t)),
           ),
         };
-      if (name === "open_computer") {
+      if (operation === "open_computer") {
         if (a.mode === "control" && !a.request_id)
           throw new GatewayError(
             "INVALID_ARGUMENT",
@@ -555,44 +650,64 @@ export class Core extends EventEmitter {
           );
         const open = async (): Promise<ToolResult> => {
           this.auth.check(i, "video:read", a.computer_id);
-          if (this.sessions.size >= this.limits.maxSessions)
+          const reservations = [...this.opening.values()].reduce(
+            (sum, n) => sum + n,
+            0,
+          );
+          const owned = [...this.sessions.values()].filter(
+            (s) => s.token_id === i.token.id,
+          ).length;
+          if (
+            this.sessions.size + reservations >= this.limits.maxSessions ||
+            owned + (this.opening.get(i.token.id) ?? 0) >=
+              Math.min(32, this.limits.maxSessions)
+          )
             throw new GatewayError("RESOURCE_LIMIT");
-          const r = this.get(a.computer_id);
-          await this.connect(r);
-          const s: Session = {
-            session_id: randomUUID(),
-            owner_id: "owner",
-            client_id: i.client_id,
-            token_id: i.token.id,
-            ui_id: i.ui_id,
-            device_id: a.computer_id,
-            mode: a.mode,
-            expires_at: Date.now() + 3600000,
-            connection_generation: r.media.generation,
-            references: new Map(),
-            journal: new Map(),
-          };
-          this.sessions.set(s.session_id, s);
+          this.opening.set(i.token.id, (this.opening.get(i.token.id) ?? 0) + 1);
           try {
-            if (a.mode === "control")
-              await this.serialized(r, () => this.acquire(i, s, r));
-            r.media.retain(
-              s.session_id,
-              a.profile ??
-                (r.device.media_profile === "auto"
-                  ? "active"
-                  : r.device.media_profile),
-            );
-            const image = await this.observe(i, s);
-            return {
-              ok: true,
-              session: this.publicSession(s),
-              lease: r.lease ?? null,
-              images: [image],
+            const r = this.get(a.computer_id);
+            await this.connect(r);
+            this.auth.check(i, "video:read", a.computer_id);
+            if (r.closing) throw new GatewayError("DEVICE_OFFLINE");
+            const s: Session = {
+              session_id: randomUUID(),
+              owner_id: "owner",
+              client_id: i.client_id,
+              token_id: i.token.id,
+              ui_id: i.ui_id,
+              device_id: a.computer_id,
+              mode: a.mode,
+              expires_at: Date.now() + 3600000,
+              connection_generation: r.media.generation,
+              references: new Map(),
+              journal: new Map(),
             };
-          } catch (e) {
-            await this.close(s);
-            throw e;
+            this.sessions.set(s.session_id, s);
+            try {
+              if (a.mode === "control")
+                await this.serialized(r, () => this.acquire(i, s, r));
+              r.media.retain(
+                s.session_id,
+                a.profile ??
+                  (r.device.media_profile === "auto"
+                    ? "active"
+                    : r.device.media_profile),
+              );
+              const image = await this.observe(i, s);
+              return {
+                ok: true,
+                session: this.publicSession(s),
+                lease: r.lease ?? null,
+                images: [image],
+              };
+            } catch (e) {
+              await this.close(s);
+              throw e;
+            }
+          } finally {
+            const remaining = (this.opening.get(i.token.id) ?? 1) - 1;
+            if (remaining) this.opening.set(i.token.id, remaining);
+            else this.opening.delete(i.token.id);
           }
         };
         if (!a.request_id) return await open();
@@ -607,19 +722,32 @@ export class Core extends EventEmitter {
       }
       const s = this.session(i, a.session_id),
         r = this.get(s.device_id);
-      if (name === "close_computer") {
+      if (operation === "close_computer") {
         await this.close(s);
         return { ok: true };
       }
-      if (name === "computer_screenshot")
+      if (operation === "computer_screenshot")
         return {
           ok: true,
           images: [await this.observe(i, s, a.max_age_ms, a.timeout_ms)],
         };
+      // When full, retire the session so a late repeated release cannot affect
+      // a later acquisition. Normal releases retain their journal semantics.
+      if (
+        operation === "computer_control" &&
+        a.operation === "release" &&
+        s.journal.size >= 256 &&
+        !s.journal.has(a.request_id)
+      ) {
+        this.auth.check(i, "input:write", s.device_id);
+        if (r.lease?.session_id === s.session_id) await this.revoke(r);
+        await this.close(s);
+        return { ok: true, lease: null, session_closed: true };
+      }
       return await this.dedupe(s.journal, a.request_id, { name, ...a }, () =>
         this.serialized(r, async () => {
           this.session(i, s.session_id);
-          if (name === "computer_control") {
+          if (operation === "computer_control") {
             if (a.operation === "acquire") await this.acquire(i, s, r);
             else if (a.operation === "renew") {
               this.assertControl(i, s, r);
@@ -653,19 +781,18 @@ export class Core extends EventEmitter {
             );
           r.driver.validate(a.actions, ref.width, ref.height);
           const count =
-            a.actions.filter((x: any) => x.type === "screenshot").length +
+            a.actions.filter((x) => x.type === "screenshot").length +
             (a.observation?.mode === "none" ? 0 : 1);
           if (
             count > 4 ||
             a.actions.reduce(
-              (n: number, x: any) =>
-                n + (x.type === "wait" ? x.duration_ms : 0),
+              (n: number, x) => n + (x.type === "wait" ? x.duration_ms : 0),
               0,
             ) > 25000
           )
             throw new GatewayError("RESOURCE_LIMIT");
           if (count) this.auth.check(i, "video:read", s.device_id);
-          const statuses = a.actions.map((x: any) => ({
+          const statuses = a.actions.map((x) => ({
             type: x.type,
             status: "not_started",
           }));
@@ -759,11 +886,12 @@ export class Core extends EventEmitter {
             images,
           };
           if (error) result.error = this.error(error).error;
+          result.journal_remaining = Math.max(0, 256 - s.journal.size);
           return result;
         }),
       );
     } catch (e) {
-      if ((e as any)?.name === "ZodError")
+      if ((e as any)?.operation === "ZodError")
         return {
           ok: false,
           error: {
@@ -774,7 +902,7 @@ export class Core extends EventEmitter {
       return this.error(e);
     }
   }
-  publicSession(s: Session) {
+  publicSession(s: Session): SessionView {
     return {
       session_id: s.session_id,
       owner_id: s.owner_id,
@@ -783,6 +911,7 @@ export class Core extends EventEmitter {
       mode: s.mode,
       expires_at: s.expires_at,
       connection_generation: s.connection_generation,
+      journal_remaining: Math.max(0, 256 - s.journal.size),
     };
   }
   async stopControl(i: Identity, id: string, resume = false) {
@@ -824,6 +953,7 @@ export class Core extends EventEmitter {
     }
   }
   async shutdown() {
+    this.eventLoop.disable();
     clearInterval(this.sweep);
     for (const r of [...this.devices.values()]) await this.unmount(r);
   }

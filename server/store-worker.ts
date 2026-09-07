@@ -9,9 +9,11 @@ if (version > 1)
 db.exec(
   "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS documents (kind TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(kind,id)); PRAGMA user_version=1",
 );
+parentPort!.postMessage({ ready: true });
 parentPort!.on("message", ({ id, op, kind, key, value, revision }) => {
   try {
     let result: unknown;
+    if (op === "ping") result = db.prepare("SELECT 1 AS ok").get();
     if (op === "list")
       result = db
         .prepare("SELECT json,revision FROM documents WHERE kind=?")

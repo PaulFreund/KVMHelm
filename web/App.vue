@@ -3,7 +3,33 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "./components/ui/button/Button.vue";
 import Screen from "./components/Screen.vue";
+import { useDeviceEditor } from "./use-device-editor";
+import { listenEvents } from "./event-stream";
+import type {
+  DeviceView,
+  GatewayEvent,
+  PluginView,
+  ExtensionView,
+  TokenView,
+  MeView,
+  Preferences,
+} from "../shared/contracts";
 import { api, setCsrf, headers, rememberToken } from "./api";
+const {
+  editing,
+  driverModels,
+  changeDriver,
+  caPem,
+  clearCredentials,
+  clearCa,
+  modal,
+  secret,
+  username,
+  edit,
+  saveDevice,
+  rememberCertificate,
+  remove,
+} = useDeviceEditor(run, refresh);
 const route = useRoute(),
   router = useRouter();
 const section = computed(() => String(route.params.section ?? "computers"));
@@ -11,18 +37,15 @@ const logged = ref(false),
   pat = ref(""),
   error = ref(""),
   loading = ref(false),
-  devices = ref<any[]>([]),
-  events = ref<any[]>([]),
-  plugins = ref<any[]>([]),
-  extensions = ref<any[]>([]),
-  tokens = ref<any[]>([]),
-  diagnostics = ref<any>(),
+  devices = ref<DeviceView[]>([]),
+  events = ref<GatewayEvent[]>([]),
+  plugins = ref<PluginView[]>([]),
+  extensions = ref<ExtensionView[]>([]),
+  tokens = ref<TokenView[]>([]),
+  diagnostics = ref<unknown>(),
   query = ref(""),
-  modal = ref(false),
-  secret = ref(""),
-  username = ref("admin"),
   newToken = ref("");
-const prefs = ref({
+const prefs = ref<Preferences>({
   revision: 0,
   sidebar: true,
   theme: "dark",
@@ -31,24 +54,7 @@ const prefs = ref({
   visible: [] as string[],
   tile_size: 400,
 });
-const editing = ref<any>({});
-const driverModels: Record<string, string[]> = {
-  "pikvm-v4": ["PiKVM v4", "PiKVM v4 Mini", "PiKVM v4 Plus"],
-  jetkvm: ["JetKVM"],
-  "glinet-comet": ["GL-RM1 (Comet)", "GL-RM10 (Comet Pro)"],
-  simulator: ["Synthetic KVM"],
-};
-function changeDriver() {
-  editing.value.model = driverModels[editing.value.driver_id][0];
-  editing.value.transport =
-    editing.value.driver_id === "simulator" ? "simulator" : "network";
-  if (editing.value.transport === "network" && !editing.value.address)
-    editing.value.address = "http://";
-}
-const caPem = ref(""),
-  clearCredentials = ref(false),
-  clearCa = ref(false);
-const me = ref<any>();
+const me = ref<MeView>();
 const tokenName = ref("Codex"),
   tokenDevices = ref("*"),
   tokenScopes = ref(["devices:read", "video:read", "input:write"]);
@@ -66,7 +72,8 @@ const allScopes = [
 const pluginPath = ref(""),
   pluginDevices = ref("");
 let timer: ReturnType<typeof setInterval>;
-let controller: AbortController | undefined;
+let stopEvents: (() => void) | undefined;
+const gatewayConnected = ref(false);
 let saveTail = Promise.resolve();
 const selected = computed(() =>
   devices.value.find((d) => d.device_id === prefs.value.selected),
@@ -94,7 +101,7 @@ const ready = computed(
       .length,
 );
 const can = (s: string) => me.value?.token.scopes.includes(s);
-async function run(fn: () => Promise<any>) {
+async function run(fn: () => Promise<unknown>) {
   error.value = "";
   try {
     return await fn();
@@ -124,7 +131,9 @@ async function load() {
 async function login() {
   loading.value = true;
   await run(async () => {
-    const data = await api("/login", "POST", { pat: pat.value });
+    const data = await api<{ csrf: string }>("/login", "POST", {
+      pat: pat.value,
+    });
     setCsrf(data.csrf);
     rememberToken(pat.value.trim());
     pat.value = "";
@@ -133,17 +142,23 @@ async function login() {
   loading.value = false;
 }
 function save() {
-  saveTail = saveTail.then(async () => {
-    try {
-      const result = await api("/preferences", "PUT", prefs.value);
-      prefs.value.revision = result.revision;
-      document.documentElement.dataset.theme = prefs.value.theme;
-    } catch (e) {
-      prefs.value = await api("/preferences");
-      error.value =
-        "Einstellungen wurden in einem anderen Fenster geändert. Aktueller Stand geladen.";
-    }
-  });
+  saveTail = saveTail
+    .catch(() => {})
+    .then(async () => {
+      try {
+        const result = await api<Preferences>(
+          "/preferences",
+          "PUT",
+          prefs.value,
+        );
+        prefs.value.revision = result.revision;
+        document.documentElement.dataset.theme = prefs.value.theme;
+      } catch (e) {
+        prefs.value = await api("/preferences");
+        error.value =
+          "Einstellungen wurden in einem anderen Fenster geändert. Aktueller Stand geladen.";
+      }
+    });
   return saveTail;
 }
 function select(id: string) {
@@ -170,100 +185,6 @@ function reorder(id: string, delta: number, wall = false) {
   prefs.value.order = ids;
   void save();
 }
-function edit(d?: any) {
-  editing.value = d
-    ? Object.fromEntries(
-        [
-          "device_id",
-          "name",
-          "driver_id",
-          "model",
-          "firmware",
-          "address",
-          "secret_ref",
-          "tls",
-          "tags",
-          "enabled",
-          "media_profile",
-          "keyboard_layout",
-          "minimum_action_latency_ms",
-          "transport",
-          "revision",
-        ].map((k) => [k, d[k]]),
-      )
-    : {
-        name: "",
-        driver_id: "pikvm-v4",
-        model: "PiKVM v4",
-        firmware: "unknown",
-        address: "https://",
-        tls: {},
-        tags: [],
-        enabled: true,
-        media_profile: "auto",
-        keyboard_layout: "de",
-        minimum_action_latency_ms: 30,
-        transport: "network",
-        revision: 0,
-      };
-  editing.value.minimum_action_latency_ms ??= 30;
-  editing.value.tls = { ...editing.value.tls };
-  secret.value = "";
-  caPem.value = "";
-  clearCredentials.value = false;
-  clearCa.value = false;
-  username.value = "admin";
-  modal.value = true;
-}
-async function saveDevice() {
-  await run(async () => {
-    if (editing.value.driver_id === "simulator") {
-      editing.value.transport = "simulator";
-      delete editing.value.address;
-      editing.value.model = "Synthetic KVM";
-    }
-    await api("/devices", "POST", {
-      device: editing.value,
-      ...(secret.value
-        ? { secret: { username: username.value, password: secret.value } }
-        : clearCredentials.value
-          ? { secret: null }
-          : {}),
-      ...(caPem.value
-        ? { ca: caPem.value }
-        : clearCa.value
-          ? { ca: null }
-          : {}),
-    });
-    secret.value = "";
-    modal.value = false;
-    await refresh();
-  });
-}
-async function rememberCertificate() {
-  await run(async () => {
-    const cert = await api("/certificates/inspect", "POST", {
-      address: editing.value.address,
-    });
-    editing.value.tls.fingerprint = cert.fingerprint;
-    editing.value.tls.insecure = false;
-  });
-}
-async function remove(d: any) {
-  if (
-    !window.confirm(
-      `„${d.name}“ entfernen? Aktive Sitzungen und Verbraucher werden beendet.`,
-    )
-  )
-    return;
-  await run(async () => {
-    await api("/devices/" + d.device_id, "DELETE", {
-      revision: d.revision,
-      confirmed: true,
-    });
-    await refresh();
-  });
-}
 async function stopAll() {
   await run(async () => {
     await Promise.all(
@@ -281,36 +202,27 @@ async function page(name: string) {
       plugins.value = await api("/plugins");
   });
 }
-async function listen() {
-  controller?.abort();
-  controller = new AbortController();
-  try {
-    const response = await fetch("/api/v1/events", {
-      headers: headers(),
-      signal: controller.signal,
-    });
-    if (!response.ok) return;
-    const reader = response.body!.getReader(),
-      decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let n;
-      while ((n = buffer.indexOf("\n\n")) >= 0) {
-        const packet = buffer.slice(0, n);
-        buffer = buffer.slice(n + 2);
-        const line = packet.split("\n").find((x) => x.startsWith("data: "));
-        if (!line) continue;
-        const e = JSON.parse(line.slice(6));
-        if (!events.value.some((x) => x.event_id === e.event_id))
-          events.value = [e, ...events.value].slice(0, 256);
-        if (e.type.startsWith("plugin.") && can("plugins:manage"))
-          plugins.value = await api("/plugins");
-      }
-    }
-  } catch {}
+function listen() {
+  stopEvents?.();
+  stopEvents = listenEvents(
+    (e) => {
+      if (
+        !events.value.some(
+          (x) => x.event_id === e.event_id && x.instance_id === e.instance_id,
+        )
+      )
+        events.value = [e, ...events.value].slice(0, 256);
+      if (e.type.startsWith("plugin.") && can("plugins:manage"))
+        void api("/plugins")
+          .then((value) => {
+            plugins.value = value;
+          })
+          .catch(() => {});
+    },
+    (value) => {
+      gatewayConnected.value = value;
+    },
+  );
 }
 onMounted(async () => {
   try {
@@ -322,7 +234,7 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   clearInterval(timer);
-  controller?.abort();
+  stopEvents?.();
 });
 </script>
 <template>
@@ -397,9 +309,12 @@ onBeforeUnmount(() => {
         >
       </div>
       <div class="sidebar-bottom">
-        <span class="status-dot ready" /><span v-if="prefs.sidebar"
-          >Gateway verbunden</span
-        >
+        <span
+          class="status-dot"
+          :class="gatewayConnected ? 'ready' : 'error'"
+        /><span v-if="prefs.sidebar">{{
+          gatewayConnected ? "Gateway verbunden" : "Verbindung unterbrochen"
+        }}</span>
       </div>
     </aside>
     <main>
@@ -466,7 +381,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="selected" class="computer-layout">
           <Screen
-            :key="selected.device_id"
+            :key="selected!.device_id"
             :device="selected"
             @refresh="run(refresh)"
           />
@@ -488,7 +403,7 @@ onBeforeUnmount(() => {
                   @click="
                     run(async () => {
                       await api(
-                        `/devices/${selected.device_id}/test`,
+                        `/devices/${selected!.device_id}/test`,
                         'POST',
                         {},
                       );
@@ -499,12 +414,12 @@ onBeforeUnmount(() => {
                 ><Button
                   variant="ghost"
                   size="sm"
-                  @click="reorder(selected.device_id, -1)"
+                  @click="reorder(selected!.device_id, -1)"
                   >←</Button
                 ><Button
                   variant="ghost"
                   size="sm"
-                  @click="reorder(selected.device_id, 1)"
+                  @click="reorder(selected!.device_id, 1)"
                   >→</Button
                 >
               </div>
@@ -516,7 +431,7 @@ onBeforeUnmount(() => {
                 @click="
                   run(async () => {
                     diagnostics = await api(
-                      `/devices/${selected.device_id}/benchmark`,
+                      `/devices/${selected!.device_id}/benchmark`,
                       'POST',
                       {},
                     );
@@ -533,8 +448,8 @@ onBeforeUnmount(() => {
           <template v-for="p in extensions" :key="p.id"
             ><div
               v-for="panel in p.panels.filter(
-                (x: any) =>
-                  x.device_id === selected.device_id &&
+                (x) =>
+                  x.device_id === selected!.device_id &&
                   x.slot === 'kvm.sidepanel',
               )"
               :key="panel.id"
@@ -610,7 +525,7 @@ onBeforeUnmount(() => {
               <template v-for="p in extensions" :key="p.id"
                 ><span
                   v-for="badge in p.panels.filter(
-                    (x: any) =>
+                    (x) =>
                       x.slot === 'overview.badge' &&
                       x.device_id === d.device_id,
                   )"
@@ -696,7 +611,7 @@ onBeforeUnmount(() => {
         <template v-for="p in extensions" :key="p.id"
           ><div
             v-for="panel in p.panels.filter(
-              (x: any) => x.slot === 'settings.plugins',
+              (x) => x.slot === 'settings.plugins',
             )"
             :key="panel.id"
             class="detail-card"
@@ -809,7 +724,7 @@ onBeforeUnmount(() => {
             <Button
               @click="
                 run(async () => {
-                  const r = await api('/tokens', 'POST', {
+                  const r = await api<{ token: string }>('/tokens', 'POST', {
                     name: tokenName,
                     scopes: tokenScopes,
                     devices: tokenDevices.split(',').map((x) => x.trim()),
@@ -855,7 +770,7 @@ onBeforeUnmount(() => {
                   } finally {
                     rememberToken('');
                     logged = false;
-                    controller?.abort();
+                    stopEvents?.();
                   }
                 })
               "
