@@ -44,6 +44,10 @@ interface Loaded extends PluginRecord {
   lastHealth: number;
 }
 export class PluginHost {
+  private calls = new Map<
+    string,
+    { plugin: Loaded; finish: (error?: string) => void }
+  >();
   private eventBudget = new Map<string, { at: number; count: number }>();
   entries = new Map<string, Loaded>();
   private health: NodeJS.Timeout;
@@ -192,6 +196,14 @@ export class PluginHost {
       p.status = "running";
       return;
     }
+    if (m.type === "action.result") {
+      const pending = this.calls.get(m.request_id);
+      if (pending?.plugin === p)
+        pending.finish(
+          m.ok === true ? undefined : "Plugin-Aktion fehlgeschlagen.",
+        );
+      return;
+    }
     if (!p.enabled) throw new GatewayError("FORBIDDEN");
     const now = Date.now();
     let budget = this.eventBudget.get(p.id);
@@ -225,6 +237,34 @@ export class PluginHost {
           title: z.string().max(100),
           text: z.string().max(16000),
           device_id: z.string().optional(),
+          fields: z
+            .array(
+              z
+                .object({
+                  id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+                  label: z.string().max(100),
+                  type: z.enum(["string-list", "number"]),
+                  value: z.union([
+                    z.array(z.string().max(200)).max(100),
+                    z.number().finite(),
+                  ]),
+                })
+                .strict(),
+            )
+            .max(12)
+            .optional(),
+          actions: z
+            .array(
+              z
+                .object({
+                  id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+                  label: z.string().max(100),
+                  disabled: z.boolean().optional(),
+                })
+                .strict(),
+            )
+            .max(8)
+            .optional(),
           slot: z.enum(["kvm.sidepanel", "settings.plugins", "overview.badge"]),
         })
         .strict()
@@ -235,7 +275,7 @@ export class PluginHost {
       p.panels = [
         ...p.panels.filter((x: any) => x.id !== panel.id),
         panel,
-      ].slice(-32);
+      ].slice(-256);
       this.core.event("plugin.panel", panel.device_id, {
         plugin_id: p.id,
         panel,
@@ -246,9 +286,27 @@ export class PluginHost {
       allowed("notifications:publish", m.device_id);
       if (!m.device_id) throw new GatewayError("FORBIDDEN");
       const text = z.string().max(2000).parse(m.text);
+      const reference = z
+        .object({
+          panel_id: z.string().max(100),
+          item_id: z.string().max(200),
+          revision: z.number().int().nonnegative(),
+        })
+        .strict()
+        .optional()
+        .parse(m.reference);
+      if (
+        reference &&
+        !p.panels.some(
+          (panel) =>
+            panel.id === reference.panel_id && panel.device_id === m.device_id,
+        )
+      )
+        throw new GatewayError("FORBIDDEN");
       this.core.event("plugin.notification", m.device_id, {
         plugin_id: p.id,
         text,
+        ...(reference ? { reference } : {}),
       });
       return;
     }
@@ -338,7 +396,62 @@ export class PluginHost {
       return;
     }
   }
+  async panelAction(
+    id: string,
+    panelId: string,
+    action: string,
+    values: Record<string, unknown>,
+    checkDevice: (id: string) => void,
+  ) {
+    const p = this.entries.get(id),
+      panel = p?.panels.find((x) => x.id === panelId);
+    if (!p || !panel || !p.enabled || !p.process || p.status !== "running")
+      throw new GatewayError("NOT_FOUND");
+    if (panel.device_id) checkDevice(panel.device_id);
+    const declared = panel.actions?.find((x) => x.id === action);
+    if (!declared || declared.disabled) throw new GatewayError("FORBIDDEN");
+    const parsed: Record<string, unknown> = Object.create(null);
+    for (const [key, value] of Object.entries(values)) {
+      const field = panel.fields?.find((x) => x.id === key);
+      if (!field) throw new GatewayError("INVALID_ARGUMENT");
+      parsed[key] =
+        field.type === "string-list"
+          ? z.array(z.string().max(200)).max(100).parse(value)
+          : z.number().finite().parse(value);
+    }
+    if (this.calls.size >= 32) throw new GatewayError("RESOURCE_LIMIT");
+    const request_id = randomUUID();
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          finish("Plugin antwortet nicht. Status vor erneutem Versuch prüfen."),
+        10000,
+      );
+      const finish = (error?: string) => {
+        clearTimeout(timer);
+        this.calls.delete(request_id);
+        error ? reject(new GatewayError("PLUGIN_ERROR", error)) : resolve();
+      };
+      this.calls.set(request_id, { plugin: p, finish });
+      p.process!.send(
+        {
+          type: "action",
+          request_id,
+          panel_id: panelId,
+          action,
+          device_id: panel.device_id,
+          values: parsed,
+        },
+        (error) => {
+          if (error) finish("Plugin nicht erreichbar.");
+        },
+      );
+    });
+    return { ok: true };
+  }
   private async stop(p: Loaded) {
+    for (const pending of this.calls.values())
+      if (pending.plugin === p) pending.finish("Plugin wurde beendet.");
     p.status = "disabled";
     for (const c of p.subscriptions.values()) c.abort();
     p.subscriptions.clear();

@@ -2,7 +2,8 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "./components/ui/button/Button.vue";
-import Screen from "./components/Screen.vue";
+import ConsoleView from "./components/ConsoleView.vue";
+import ExtensionPanel from "./components/ExtensionPanel.vue";
 import { useDeviceEditor } from "./use-device-editor";
 import { listenEvents } from "./event-stream";
 import type {
@@ -35,6 +36,7 @@ const route = useRoute(),
 const section = computed(() => String(route.params.section ?? "computers"));
 const logged = ref(false),
   pat = ref(""),
+  notices = ref<GatewayEvent[]>([]),
   error = ref(""),
   loading = ref(false),
   devices = ref<DeviceView[]>([]),
@@ -109,9 +111,12 @@ async function run(fn: () => Promise<unknown>) {
     error.value = (e as Error).message;
   }
 }
+let panelVersion = 0;
 async function refresh() {
   devices.value = await api("/devices");
-  extensions.value = await api("/ui-extensions");
+  const version = panelVersion;
+  const latest = await api("/ui-extensions");
+  if (version === panelVersion) extensions.value = latest;
 }
 async function load() {
   const data = await api("/me");
@@ -212,7 +217,29 @@ function listen() {
         )
       )
         events.value = [e, ...events.value].slice(0, 256);
-      if (e.type.startsWith("plugin.") && can("plugins:manage"))
+      if (
+        e.type === "plugin.notification" &&
+        !e.historical &&
+        !notices.value.some(
+          (n) => n.event_id === e.event_id && n.instance_id === e.instance_id,
+        )
+      )
+        notices.value = [e, ...notices.value].slice(0, 5);
+      if (e.type === "plugin.panel") {
+        panelVersion++;
+        const extension = extensions.value.find(
+          (p) => p.id === e.data.plugin_id,
+        );
+        if (extension && e.data.panel) {
+          const panel = e.data
+            .panel as import("../shared/contracts").PluginPanel;
+          extension.panels = [
+            ...extension.panels.filter((p) => p.id !== panel.id),
+            panel,
+          ];
+        }
+      }
+      if (["plugin.status"].includes(e.type) && can("plugins:manage"))
         void api("/plugins")
           .then((value) => {
             plugins.value = value;
@@ -238,6 +265,28 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
+  <div
+    v-if="logged && notices.length"
+    class="plugin-notices"
+    aria-live="polite"
+  >
+    <div
+      v-for="n in notices"
+      :key="n.instance_id + ':' + n.event_id"
+      class="plugin-notice"
+    >
+      <strong>{{
+        devices.find((d) => d.device_id === n.device_id)?.name ?? "Erweiterung"
+      }}</strong>
+      <p>{{ n.data.text }}</p>
+      <Button
+        size="sm"
+        variant="ghost"
+        @click="notices = notices.filter((x) => x !== n)"
+        >Schließen</Button
+      >
+    </div>
+  </div>
   <div v-if="!logged" class="login-shell">
     <div class="login-card">
       <h1>KVMHelm</h1>
@@ -380,7 +429,9 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-if="selected" class="computer-layout">
-          <Screen
+          <ConsoleView
+            :extensions="extensions"
+            :editable="!!can('plugins:manage')"
             :key="selected!.device_id"
             :device="selected"
             @refresh="run(refresh)"
@@ -445,20 +496,6 @@ onBeforeUnmount(() => {
               }}</pre>
             </div>
           </div>
-          <template v-for="p in extensions" :key="p.id"
-            ><div
-              v-for="panel in p.panels.filter(
-                (x) =>
-                  x.device_id === selected!.device_id &&
-                  x.slot === 'kvm.sidepanel',
-              )"
-              :key="panel.id"
-              class="detail-card"
-            >
-              <h3>{{ panel.title }}</h3>
-              <p class="preserve">{{ panel.text }}</p>
-            </div></template
-          >
         </div>
         <div v-else class="empty-state">
           <div class="empty-icon">▣</div>
@@ -520,7 +557,12 @@ onBeforeUnmount(() => {
                 >→</Button
               >
             </div>
-            <Screen :device="d" overview />
+            <ConsoleView
+              :device="d"
+              :extensions="extensions"
+              :editable="!!can('plugins:manage')"
+              overview
+            />
             <div class="tile-footer">
               <template v-for="p in extensions" :key="p.id"
                 ><span

@@ -468,6 +468,26 @@ export async function serve(
       ),
     );
   });
+  app.post("/api/v1/plugins/:id/panels/:panel/actions", async (q, r) => {
+    const identity = who(r);
+    core.auth.check(identity, "plugins:manage");
+    const body = z
+      .object({
+        action: z.string().max(64),
+        values: z.record(z.string(), z.unknown()).default({}),
+      })
+      .strict()
+      .parse(q.body);
+    r.json(
+      await plugins.panelAction(
+        String(q.params.id),
+        String(q.params.panel),
+        body.action,
+        body.values,
+        (id) => core.auth.check(identity, "devices:read", id),
+      ),
+    );
+  });
   app.post("/api/v1/plugins/:id/:op", async (q, r) => {
     core.auth.check(who(r), "plugins:manage");
     r.json(await plugins.operation(String(q.params.id), String(q.params.op)));

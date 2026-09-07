@@ -129,12 +129,20 @@ export interface Preferences {
   visible: string[];
   tile_size: number;
 }
+export interface PluginPanelField {
+  id: string;
+  label: string;
+  type: "string-list" | "number";
+  value: string[] | number;
+}
 export interface PluginPanel {
   id: string;
   title: string;
   text: string;
   device_id?: string;
   slot: "kvm.sidepanel" | "settings.plugins" | "overview.badge";
+  fields?: PluginPanelField[];
+  actions?: { id: string; label: string; disabled?: boolean }[];
 }
 export interface ExtensionView {
   id: string;

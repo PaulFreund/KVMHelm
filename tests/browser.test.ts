@@ -63,13 +63,13 @@ test(
       await expect(page.locator(".screen img")).toHaveCount(1);
       assert.ok(opens >= 2, "initial open must retry");
       await page
-        .getByRole("button", { name: "Steuerung anfordern", exact: true })
+        .getByRole("button", { name: "Steuerung übernehmen", exact: true })
         .click();
       await expect(
         page.getByRole("button", { name: "Steuerung freigeben", exact: true }),
       ).toBeVisible();
       await page
-        .getByRole("button", { name: "Tastatur aktivieren", exact: true })
+        .getByRole("button", { name: "Text / Paste", exact: true })
         .click();
       const field = page.getByLabel("Text auf Ziel eingeben");
       await field.click();
@@ -116,7 +116,7 @@ test(
       await expect.poll(() => core.sessions.size, { timeout: 15000 }).toBe(1);
       await expect(page.locator(".frame-error")).toHaveCount(0);
       await expect(
-        page.getByRole("button", { name: "Steuerung anfordern", exact: true }),
+        page.getByRole("button", { name: "Steuerung übernehmen", exact: true }),
       ).toBeVisible();
       assert.equal(
         core.get(f.device.device_id).lease,

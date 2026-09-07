@@ -145,3 +145,5 @@ Keine feste Grenze von vier Geräten. POC-Ressourcenlimits: standardmäßig 128 
 **Nicht implementiert:** weitere Herstelleradapter, USB-KVM, Recorder, Power/Reset, Virtual Media, Dateitransfer, Webcam-Emulation. Die zukünftigen Verträge stehen in [Architektur](docs/architecture.md). Eine Nutzungslizenz ist noch nicht festgelegt; die npm-Veröffentlichung ist deaktiviert.
 
 Betrieb und Fehlerbehandlung: [Robustheit und Regressionstests](docs/reliability.md).
+
+Bedienung der verbesserten Browserkonsole: [Tastatur, Maus, Paste und Audio](docs/web-console.md).

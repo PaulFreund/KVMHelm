@@ -17,6 +17,7 @@ export function useComputer(
   const session = ref<SessionView>(),
     frame = ref<FrameInfo>(),
     source = ref("");
+  const rotating = ref(false);
   const busy = ref(false),
     control = ref(false),
     last = ref(0),
@@ -195,15 +196,17 @@ export function useComputer(
     }
   }
   async function execute(actions: ComputerAction[]) {
-    if (!control.value || !frame.value || !session.value || disposed) return;
+    if (!control.value || !frame.value || !session.value || disposed)
+      throw new Error("Steuerung nicht verfügbar.");
     working = true;
     pollAbort?.abort();
     const version = ++epoch;
     try {
       if (session.value.journal_remaining <= 8) {
+        rotating.value = true;
         await tool("close_computer", { session_id: session.value.session_id });
         session.value = undefined;
-        if (epoch !== version || disposed) return;
+        if (epoch !== version || disposed) return false;
         await open();
         if (epoch !== version || disposed) {
           if (session.value)
@@ -211,10 +214,10 @@ export function useComputer(
               session_id: (session.value as SessionView).session_id,
             });
           session.value = undefined;
-          return;
+          return false;
         }
         const rotated = session.value as SessionView | undefined;
-        if (!rotated) return;
+        if (!rotated) return false;
         await tool("computer_control", {
           session_id: rotated.session_id,
           request_id: crypto.randomUUID(),
@@ -223,13 +226,13 @@ export function useComputer(
         if (epoch !== version || disposed) {
           await tool("close_computer", { session_id: rotated.session_id });
           session.value = undefined;
-          return;
+          return false;
         }
         show(
           await tool("computer_screenshot", { session_id: rotated.session_id }),
         );
       }
-      if (!session.value || !frame.value || epoch !== version) return;
+      if (!session.value || !frame.value || epoch !== version) return false;
       const f = frame.value;
       const result = await tool("computer", {
         session_id: (session.value as SessionView).session_id,
@@ -254,16 +257,20 @@ export function useComputer(
           ["RESOURCE_LIMIT", "CONTROL_BUSY"].includes(e.code))
       )
         loseControl();
-      // Never replay uncertain input. A later poll obtains another observation.
+      // Never replay uncertain input. Preserve paste drafts on failure.
+      throw e;
     } finally {
       working = false;
+      rotating.value = false;
     }
   }
-  async function send(actions: ComputerAction[]) {
-    if (!control.value || disposed) return;
-    if (!(await queue.enqueue(actions)) && control.value)
+  async function send(actions: ComputerAction[]): Promise<boolean> {
+    if (!control.value || disposed) return false;
+    const ok = await queue.enqueue(actions);
+    if (!ok && control.value && !error.value)
       error.value =
-        "Eingabewarteschlange voll oder abgebrochen. Bitte erneut beobachten.";
+        "Eingabe abgebrochen oder Warteschlange voll. Bitte erneut beobachten.";
+    return ok;
   }
   async function releaseInputs() {
     cancelInputs();
@@ -315,6 +322,7 @@ export function useComputer(
   });
   return {
     session,
+    rotating,
     frame,
     source,
     busy,

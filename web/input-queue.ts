@@ -5,7 +5,7 @@ export class InputQueue {
   private items: Entry[] = [];
   private running = false;
   constructor(
-    private execute: (actions: ComputerAction[]) => Promise<void>,
+    private execute: (actions: ComputerAction[]) => Promise<void | boolean>,
     readonly capacity = 32,
   ) {}
   get pending() {
@@ -19,6 +19,15 @@ export class InputQueue {
     const last = this.items.at(-1),
       a = actions[0],
       b = last?.actions[0];
+    if (
+      actions.length === 1 &&
+      last?.actions.length === 1 &&
+      a.type === "move" &&
+      b?.type === "move"
+    ) {
+      last.actions = structuredClone(actions);
+      return new Promise((done) => last.done.push(done));
+    }
     if (
       actions.length === 1 &&
       last?.actions.length === 1 &&
@@ -46,8 +55,8 @@ export class InputQueue {
       while (this.items.length) {
         const item = this.items.shift()!;
         try {
-          await this.execute(item.actions);
-          item.done.forEach((done) => done(true));
+          const ok = await this.execute(item.actions);
+          item.done.forEach((done) => done(ok !== false));
         } catch {
           item.done.forEach((done) => done(false));
           this.cancel();

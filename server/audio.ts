@@ -298,6 +298,7 @@ export function audioServer(
           }, 250);
           if (!d.driver.subscribeAudio)
             throw new GatewayError("UNSUPPORTED_ACTION");
+          ws.send(JSON.stringify({ ready: true }));
           d.media.retain(consumer, "warm");
           void (async () => {
             try {

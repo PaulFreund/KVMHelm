@@ -44,3 +44,11 @@ Panels und Benachrichtigungen werden als Text gerendert, nie über `v-html`. All
 Ein separates Plugin konfiguriert seine eigene Secretquelle; der Host übermittelt keine Gerätepasswörter, Admin-PATs oder Zugangsdaten externer Dienste. `secretRefs` sind Referenzen, kein allgemeiner Lesezugriff auf den Secretstore. Plugin-eigene optionale Persistenz liegt unter dem eigenen Datenpfad. Der Kern implementiert keinen Medienrecorder.
 
 Stop, Disable und Uninstall beenden alle Consumer des Plugins. Eine Änderung der Gerätefreigabe erfolgt im POC durch erneute Installation mit dem ausdrücklich gewünschten Geräteumfang und stoppt die alte Instanz zuerst. Weitere Treiber werden zunächst als vertrauenswürdige In-Process-Factories über den TypeScript-Adaptervertrag eingebunden; ausführbare Treiber-/Medien-RPC-Plugins sind nicht als freigegebener Runtimepfad behauptet.
+
+## Optionale Formularaktionen und Seitenpanels
+
+Ein Panel kann zusätzlich `fields` und `actions` deklarieren. Felder besitzen `id`, `label`, `type: "string-list" | "number"` und `value`. Aktionen besitzen `id`, `label` und optional `disabled`. Die UI rendert ausschließlich native Textfelder; keine Plugin-Skripte oder HTML-Injektion. Gerätebezogene Seitenpanels lassen sich pro Bildschirm einblenden und stehen bei ausreichender Breite daneben. Die Anzeigeeinstellung steuert keine laufenden Plugin-Consumer.
+
+`POST /api/v1/plugins/:id/panels/:panel/actions` erwartet `{action,values}`. Der Host benötigt `plugins:manage` und überprüft zusätzlich die Gerätefreigabe des Panels. Er akzeptiert nur deklarierte Aktionen und Felder und sendet `{type:"action",request_id,panel_id,action,device_id,values}`. Das Plugin antwortet `{type:"action.result",request_id,ok}`. Zeitlimit zehn Sekunden; ungewisse Aktionen werden nicht automatisch wiederholt. Maximal 32 ausstehende Aktionen und 256 aktuelle Panels je Plugin.
+
+Benachrichtigungen dürfen optional `reference: {panel_id,item_id,revision}` auf ein eigenes Panel desselben Gerätes verweisen. Die Referenz bleibt im Event, die In-App-Meldung zeigt den Text. Historische SSE-Ereignisse erscheinen nicht erneut als Toast. Auslieferung in einen geschlossenen Browser ist nicht zugesagt.

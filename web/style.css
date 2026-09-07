@@ -1037,3 +1037,273 @@ meter {
 .manage-row {
   flex-wrap: wrap;
 }
+/* KVM console: one control mode, independent sound and microphone. */
+.control-toolbar {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 7px;
+}
+.control-hint {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 8px 10px 3px;
+}
+.display.input-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.display.native-size {
+  display: block;
+  overflow: auto;
+  max-height: 74vh;
+}
+.display.native-size img {
+  max-width: none;
+  max-height: none;
+  margin: 0 auto;
+}
+.shortcut-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 4px 10px 8px;
+}
+.shortcut-bar > span {
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 8px;
+}
+.paste-panel {
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+.paste-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.paste-label small,
+.paste-actions small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.paste-panel textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  font-family: monospace;
+}
+.paste-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.audio-controls .audio-bar {
+  gap: 8px;
+  min-height: 42px;
+}
+.audio-controls .audio-bar strong {
+  width: 62px;
+}
+.audio-controls input[type="range"] {
+  width: 100px;
+}
+.audio-controls select {
+  width: auto;
+  max-width: 200px;
+}
+.audio-controls .mic-live {
+  box-shadow: inset 3px 0 var(--accent);
+}
+.audio-note {
+  color: var(--muted);
+  font-size: 10px;
+  margin: 0;
+  padding: 4px 10px 9px;
+}
+.screen:fullscreen {
+  overflow: auto;
+  background: var(--panel);
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+}
+.screen:fullscreen .display {
+  flex: 1;
+  min-height: 160px;
+}
+.screen:fullscreen .display img {
+  max-height: calc(100vh - 300px);
+}
+.screen:fullscreen .display.native-size img {
+  max-height: none;
+}
+@media (max-width: 600px) {
+  .control-toolbar {
+    gap: 5px;
+  }
+  .audio-controls .audio-bar strong {
+    width: 100%;
+  }
+  .audio-controls select {
+    max-width: 100%;
+  }
+  .screen-meta {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+.screen:not(.overview) .display:not(.native-size) img {
+  max-height: max(240px, calc(100dvh - 350px));
+}
+.screen:fullscreen:not(.overview) .display:not(.native-size) img {
+  max-height: max(160px, calc(100dvh - 300px));
+}
+.audio-controls {
+  border-bottom: 1px solid var(--line);
+}
+.console-with-panels {
+  min-width: 0;
+}
+.console-with-panels.panels-visible {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 10px;
+  align-items: start;
+}
+.console-with-panels > * {
+  min-width: 0;
+}
+.console-with-panels aside {
+  max-height: 85vh;
+  overflow: auto;
+}
+.extension-toggle {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 6px;
+}
+.extension-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel);
+  margin-bottom: 8px;
+}
+.extension-panel header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.extension-panel header label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+.extension-log {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  min-height: 150px;
+  overflow: auto;
+  font: 12px/1.6 inherit;
+}
+.extension-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0;
+  font-size: 11px;
+}
+.extension-field textarea {
+  width: 100%;
+}
+.extension-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+.extension-panel summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.plugin-notices {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 75vh;
+  overflow: auto;
+  z-index: 80;
+}
+.plugin-notice {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px #0005;
+  margin-bottom: 8px;
+}
+.plugin-notice p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.wall .console-with-panels.panels-visible {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 1000px) {
+  .console-with-panels.panels-visible {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.wall > div:has(.panels-visible) {
+  grid-column: 1 / -1;
+}
+.wall .console-with-panels.panels-visible {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+}
+@media (max-width: 1000px) {
+  .wall .console-with-panels.panels-visible {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.console-with-panels > aside {
+  position: static;
+  top: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: block;
+}
+.extension-panel > header {
+  padding: 0 0 8px;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  border: 0;
+}
+.extension-panel > header label {
+  flex-direction: row;
+  white-space: nowrap;
+  margin: 0;
+}
+.extension-panel > header input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+.extension-log {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
