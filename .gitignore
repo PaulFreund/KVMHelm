@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.kvmhelm/
+*.log
+.env
+coverage/
+runtime/
+
+# Local credentials, recordings and databases
+.env.*
+*.pat
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+*.sqlite*
+*.db
+*.mov
+*.mp4
+playwright-report/
+test-results/
