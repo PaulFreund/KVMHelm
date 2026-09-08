@@ -20,6 +20,7 @@ test(
     });
     const micChanges: boolean[] = [];
     let packets = 0;
+    let audioAvailable = false;
     runtime.driver.setMicrophone = async (enabled) => {
       micChanges.push(enabled);
     };
@@ -30,7 +31,7 @@ test(
     runtime.driver.subscribeAudio = async function* (signal) {
       while (!signal.aborted) {
         await delay(30);
-        if (!signal.aborted)
+        if (!signal.aborted && audioAvailable)
           yield {
             device_id: f.device.device_id,
             format: "pcm_s16le" as const,
@@ -183,6 +184,14 @@ test(
       await page
         .getByRole("button", { name: "Ziel hören", exact: true })
         .click();
+      await expect(
+        page.getByRole("button", { name: "Verbinden abbrechen", exact: true }),
+      ).toBeVisible();
+      await delay(200);
+      await expect(
+        page.getByRole("button", { name: "Ton ausschalten", exact: true }),
+      ).toHaveCount(0);
+      audioAvailable = true;
       await expect(
         page.getByRole("button", { name: "Ton ausschalten", exact: true }),
       ).toBeVisible();

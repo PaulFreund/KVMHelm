@@ -7,11 +7,34 @@ import { CometDriver } from "../server/drivers/comet.js";
 import { PiKvmDriver } from "../server/drivers/pikvm.js";
 import { deviceSchema } from "../shared/contracts.js";
 import { randomUUID } from "node:crypto";
+import { PiAudio } from "../server/audio.js";
 for (const model of ["PiKVM v4", "GL-RM1 (Comet)", "GL-RM10 (Comet Pro)"])
   test(
     model +
       " protocol fixture: persistent HID, native pixel mapping, release and reconnect",
-    async () => {
+    async (t) => {
+      let finishOldProbe: (() => void) | undefined;
+      if (model === "PiKVM v4") {
+        let probes = 0;
+        t.mock.method(PiAudio.prototype, "probe", () => {
+          if (++probes === 1)
+            return new Promise((resolve) => {
+              finishOldProbe = () =>
+                resolve({
+                  from_target: false,
+                  to_target: false,
+                  formats: [],
+                  reason: "Audio unavailable",
+                });
+            });
+          return Promise.resolve({
+            from_target: true,
+            to_target: false,
+            formats: ["pcm_s16le/48000/2"],
+            reason: "",
+          });
+        });
+      }
       const image = await sharp({
         create: { width: 640, height: 480, channels: 3, background: "#234" },
       })
@@ -151,6 +174,16 @@ for (const model of ["PiKVM v4", "GL-RM1 (Comet)", "GL-RM10 (Comet Pro)"])
           (await driver.snapshot(AbortSignal.timeout(3000))).height,
           480,
         );
+        if (finishOldProbe) {
+          assert.equal((await driver.capabilities()).audio.from_target, true);
+          finishOldProbe();
+          await Promise.resolve();
+          assert.equal(
+            (await driver.capabilities()).audio.from_target,
+            true,
+            "a late probe from the disconnected audio source must not overwrite the current capabilities",
+          );
+        }
       } finally {
         await driver.disconnect();
         for (const ws of wss.clients) ws.terminate();

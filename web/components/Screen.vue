@@ -359,7 +359,11 @@ onBeforeUnmount(() => {
         ><Button
           size="sm"
           variant="outline"
-          :disabled="!session || !device.capabilities?.audio.from_target"
+          :disabled="
+            !audioPlaying &&
+            !audioPending &&
+            (!session || !device.capabilities?.audio.from_target)
+          "
           :aria-pressed="audioPlaying"
           @click="audioPlaying || audioPending ? stopListening() : startAudio()"
           >{{

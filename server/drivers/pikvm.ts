@@ -86,15 +86,17 @@ export class PiKvmDriver extends NetworkHidDriver {
         ws.send(JSON.stringify({ event_type: "ping", event: {} }));
     }, 10000);
     await this.releaseAllInputs();
-    this.audio = new PiAudio({
+    const audio = (this.audio = new PiAudio({
       device_id: this.device.device_id,
       address: this.device.address,
       headers: this.headers,
       ca: this.ca,
       fingerprint: this.device.tls.fingerprint,
       insecure: this.device.tls.insecure,
+    }));
+    void audio.probe().then((caps) => {
+      if (this.audio === audio) this.caps.audio = caps;
     });
-    void this.audio.probe().then((caps) => (this.caps.audio = caps));
   }
   async disconnect() {
     this.closing = true;

@@ -29,6 +29,8 @@ let microphone = false,
   generation = 0,
   lastSequence: number | undefined;
 let pcm = Buffer.alloc(0);
+let watchQueue = Promise.resolve(),
+  requestedWatch = 0;
 const decoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO),
   encoder = new OpusScript(48000, 1, OpusScript.Application.VOIP);
 let rtpSeq = randomBytes(2).readUInt16BE(),
@@ -57,7 +59,7 @@ function request(m: any) {
     send({ ...m, transaction });
   });
 }
-async function watch() {
+async function watch(revision: number) {
   await pc?.close();
   pc = undefined;
   track = undefined;
@@ -65,12 +67,18 @@ async function watch() {
   generation++;
   gap = true;
   lastSequence = undefined;
-  send({
-    janus: "message",
-    transaction: randomUUID(),
-    body: { request: "stop" },
-  });
-  if (active)
+  // Janus stop tears down the handle's WebRTC state asynchronously. A new
+  // handle prevents a late hangup from destroying the next negotiation.
+  if (handle !== undefined) {
+    await request({ janus: "detach" });
+    handle = undefined;
+  }
+  if (revision !== requestedWatch) return;
+  if (active) {
+    handle = (
+      await request({ janus: "attach", plugin: "janus.plugin.ustreamer" })
+    ).data.id;
+    if (revision !== requestedWatch) return;
     send({
       janus: "message",
       transaction: randomUUID(),
@@ -79,12 +87,7 @@ async function watch() {
         params: { orientation: 0, audio: true, mic: microphone, camera: false },
       },
     });
-  else
-    send({
-      janus: "message",
-      transaction: randomUUID(),
-      body: { request: "stop" },
-    });
+  }
 }
 async function offer(jsep: any) {
   if (!active) return;
@@ -124,7 +127,7 @@ async function offer(jsep: any) {
   peer.onTrack.subscribe((t) => {
     if (t.kind !== "audio") return;
     t.onReceiveRtp.subscribe((packet) => {
-      if (!active) return;
+      if (!active || pc !== peer) return;
       try {
         const current = packet.header.sequenceNumber;
         if (lastSequence !== undefined) {
@@ -226,11 +229,16 @@ async function start() {
         pending.delete(m.transaction);
         m.error ? p.reject(Error("Janus error")) : p.resolve(m);
       }
-      if (m.jsep)
+      if (m.jsep && m.sender === handle)
         void offer(m.jsep).catch(() =>
           port.postMessage({ type: "error", code: "AUDIO_NEGOTIATION_FAILED" }),
         );
-      if (m.janus === "trickle" && m.candidate && !m.candidate.completed) {
+      if (
+        m.janus === "trickle" &&
+        m.sender === handle &&
+        m.candidate &&
+        !m.candidate.completed
+      ) {
         checkIceCandidate(m.candidate.candidate);
         void pc?.addIceCandidate(m.candidate).catch(() => {});
       }
@@ -287,9 +295,14 @@ port.on("message", (m) => {
   if (m.type === "watch") {
     active = m.active;
     microphone = m.microphone;
-    void watch().catch(() =>
-      port.postMessage({ type: "error", code: "AUDIO_NEGOTIATION_FAILED" }),
-    );
+    const revision = ++requestedWatch;
+    watchQueue = watchQueue
+      .then(async () => {
+        if (revision === requestedWatch) await watch(revision);
+      })
+      .catch(() => {
+        port.postMessage({ type: "error", code: "AUDIO_NEGOTIATION_FAILED" });
+      });
   }
   if (m.type === "pcm" && microphone) {
     const data = Buffer.from(m.data);

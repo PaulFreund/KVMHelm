@@ -206,14 +206,24 @@ export function useAudio(
         if (typeof e.data === "string") {
           try {
             const message = JSON.parse(e.data);
-            if (message.ready) ready();
+            if (message.ready && withMic) ready();
             else scheduled = context.currentTime;
           } catch {
             /* Ignore unknown metadata. */
           }
           return;
         }
-        if (withMic || !audioPlaying.value) return;
+        if (withMic) return;
+        ready();
+        if (!audioPlaying.value) return;
+        clearTimeout(c.timeout);
+        c.timeout = setTimeout(() => {
+          if (current()) {
+            audioError.value =
+              "Kein Zielaudio empfangen. Bitte erneut einschalten.";
+            stopListening();
+          }
+        }, 10000);
         const data = new Int16Array(e.data),
           length = Math.floor(data.length / 2);
         if (!length) return;
