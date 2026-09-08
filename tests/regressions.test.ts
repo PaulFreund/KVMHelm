@@ -12,6 +12,7 @@ import {
   localIceOnly,
   checkIceCandidate,
   checkIceDescription,
+  localIceDescription,
 } from "../server/lan-ice.js";
 import { RTCPeerConnection } from "werift";
 import { InputQueue } from "../web/input-queue.js";
@@ -288,6 +289,28 @@ test("LAN ICE disables implicit public STUN and rejects external candidates", as
   } finally {
     await peer.close();
   }
+});
+
+test("Janus mixed ICE offers preserve LAN candidates and SDP while removing external addresses", () => {
+  const lines = [
+    "v=0",
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+    "a=candidate:1 1 UDP 1 10.111.0.11 9000 typ host",
+    "a=candidate:2 1 UDP 1 8.8.8.8 9001 typ srflx raddr 10.111.0.11 rport 9000",
+    "a=candidate:3 1 UDP 1 fd00::11 9002 typ host",
+    "a=candidate:4 1 UDP 1 2001:4860::1 9003 typ host",
+    "a=candidate:5 1 UDP 1 untrusted.example 9004 typ host",
+    "a=sendonly",
+    "",
+  ];
+  const filtered = localIceDescription(lines.join("\r\n"));
+  assert.equal(
+    filtered,
+    [lines[0], lines[1], lines[2], lines[4], lines[7], ""].join("\r\n"),
+  );
+  assert.doesNotThrow(() => checkIceDescription(filtered));
+  assert.equal(localIceDescription(filtered), filtered);
+  assert.equal(localIceDescription("v=0\na=candidate:broken\n"), "v=0\r\n");
 });
 
 test("input queue is bounded, merges scrolls and cancels pending input", async () => {

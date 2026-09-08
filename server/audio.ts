@@ -21,6 +21,7 @@ export class PiAudio extends EventEmitter {
   private closed = false;
   private retries = 0;
   private retry?: NodeJS.Timeout;
+  private probing?: Promise<typeof this.available>;
   private failed(code: string) {
     Object.assign(this.available, {
       from_target: false,
@@ -46,6 +47,7 @@ export class PiAudio extends EventEmitter {
     super();
   }
   async probe() {
+    if (this.probing) return this.probing;
     if (this.worker) return this.available;
     const worker = new Worker(new URL("./audio-worker.js", import.meta.url), {
       workerData: this.config,
@@ -77,7 +79,7 @@ export class PiAudio extends EventEmitter {
     worker.on("error", () => {
       this.failed("AUDIO_WORKER_FAILED");
     });
-    return await new Promise<typeof this.available>((resolve) => {
+    this.probing = new Promise<typeof this.available>((resolve) => {
       const timer = setTimeout(() => {
         this.off("features", done);
         resolve(this.available);
@@ -88,6 +90,11 @@ export class PiAudio extends EventEmitter {
       };
       this.once("features", done);
     });
+    try {
+      return await this.probing;
+    } finally {
+      this.probing = undefined;
+    }
   }
   private watch() {
     this.worker?.postMessage({

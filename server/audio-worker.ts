@@ -13,7 +13,7 @@ import { localLookup, PinnedAgent } from "./network.js";
 import {
   localIceOnly,
   checkIceCandidate,
-  checkIceDescription,
+  localIceDescription,
 } from "./lan-ice.js";
 const port = parentPort!;
 let ws: WebSocket | undefined,
@@ -88,7 +88,7 @@ async function watch() {
 }
 async function offer(jsep: any) {
   if (!active) return;
-  checkIceDescription(String(jsep.sdp));
+  const description = { ...jsep, sdp: localIceDescription(String(jsep.sdp)) };
   const peer = new RTCPeerConnection({
     iceServers: [],
     codecs: {
@@ -159,7 +159,7 @@ async function offer(jsep: any) {
       }
     });
   });
-  await peer.setRemoteDescription(jsep);
+  await peer.setRemoteDescription(description);
   for (const transceiver of peer.getTransceivers()) {
     if (transceiver.kind === "video") transceiver.setDirection("inactive");
     if (transceiver.kind === "audio")
