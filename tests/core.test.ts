@@ -211,3 +211,21 @@ test("US/DE typing validates entire text, AltGr and line breaks without replacem
   assert.deepEqual(textKeys("@", "us"), [["ShiftLeft", "Digit2"]]);
   assert.throws(() => textKeys("ok🙂", "de"), /U\+1F642/);
 });
+
+test("temporary video timeout preserves control; disconnect still revokes it", async () => {
+  const f=await fixture();
+  try {
+    const {GatewayError}=await import('../shared/contracts.js');
+    const opened=await f.core.tool(f.a,'open_computer',{computer_id:f.device.device_id,mode:'control',request_id:'video-timeout'});
+    assert.equal(opened.ok,true);
+    const r=f.core.get(f.device.device_id);
+    const lease=r.lease;
+    r.media.emit('fault',new GatewayError('FRAME_TIMEOUT'));
+    assert.equal(r.status,'ready');
+    assert.equal(r.lease,lease);
+    r.media.emit('fault',new GatewayError('DEVICE_OFFLINE'));
+    assert.equal(r.status,'reconnecting');
+    await new Promise(resolve=>setTimeout(resolve,20));
+    assert.ok(!r.lease);
+  } finally {await f.close();}
+});

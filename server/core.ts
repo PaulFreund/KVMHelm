@@ -196,6 +196,9 @@ export class Core extends EventEmitter {
       void this.revoke(r);
     };
     media.on("fault", (e) => {
+      // Missing video must not tear down a working HID connection and restart
+      // the streamer while it is still warming up.
+      if (e instanceof GatewayError && e.code === "FRAME_TIMEOUT") return;
       r.status = "reconnecting";
       r.error = e instanceof GatewayError ? e.code : "DEVICE_OFFLINE";
       r.abort?.abort();

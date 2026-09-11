@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   type KvmDriver,
   type Device,
@@ -126,7 +127,29 @@ export class PiKvmDriver extends NetworkHidDriver {
     await this.audio.setMicrophone(enabled);
   }
   async snapshot(signal: AbortSignal): Promise<DriverFrame> {
-    const r = await this.http("/api/streamer/snapshot", signal);
+    // KVMD may accept the connection before its video source is ready.
+    // Retry only this read; a transient snapshot 503 is not a HID disconnect.
+    const deadline = performance.now() + 4000;
+    let r;
+    for (;;) {
+      try {
+        r = await this.http("/api/streamer/snapshot", signal);
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof GatewayError) ||
+          error.code !== "DEVICE_OFFLINE" ||
+          !error.message.endsWith("HTTP 503")
+        )
+          throw error;
+        if (performance.now() >= deadline)
+          throw new GatewayError(
+            "FRAME_TIMEOUT",
+            "PiKVM snapshot source is not ready (HTTP 503)",
+          );
+        await delay(100, undefined, { signal });
+      }
+    }
     const parts: Buffer[] = [];
     let size = 0;
     for await (const part of r.body) {

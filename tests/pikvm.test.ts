@@ -193,3 +193,49 @@ for (const model of ["PiKVM v4", "GL-RM1 (Comet)", "GL-RM10 (Comet Pro)"])
       }
     },
   );
+
+test("PiKVM retries snapshot warmup without reconnecting and preserves auth failures", async () => {
+  const image = await sharp({
+    create: { width: 32, height: 24, channels: 3, background: "#234" },
+  })
+    .jpeg()
+    .toBuffer();
+  let calls = 0,
+    status = 503;
+  const server = createServer((q, r) => {
+    calls++;
+    if (status === 503 && calls > 2) status = 200;
+    r.statusCode = status;
+    r.end(status === 200 ? image : "unavailable");
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const driver = new PiKvmDriver(
+    {
+      ...deviceSchema.parse({
+        name: "Warmup",
+        driver_id: "pikvm-v4",
+        address: `http://127.0.0.1:${(server.address() as any).port}`,
+      }),
+      device_id: randomUUID(),
+    },
+    {},
+  );
+  try {
+    const frame = await driver.snapshot(AbortSignal.timeout(2000));
+    assert.equal(calls, 3);
+    assert.equal(frame.width, 32);
+    status = 401;
+    await assert.rejects(driver.snapshot(AbortSignal.timeout(2000)), {
+      code: "AUTH_FAILED",
+    });
+    assert.equal(calls, 4, "authentication failures must not be retried");
+    status = 503;
+    calls = -100;
+    await assert.rejects(driver.snapshot(AbortSignal.timeout(50)));
+    assert.equal(calls, -99, "cancellation must stop the retry");
+  } finally {
+    await driver.disconnect();
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
