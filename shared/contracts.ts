@@ -91,8 +91,23 @@ export interface ToolEnvelope {
   isError: boolean;
   structuredContent: ToolBody & { frames: FrameInfo[] };
   content: (
-    | { type: "text"; text: string }
-    | { type: "image"; mimeType: string; data: string }
+    | {
+        type: "text";
+        text: string;
+        annotations?: {
+          audience?: ("user" | "assistant")[];
+          priority?: number;
+        };
+      }
+    | {
+        type: "image";
+        mimeType: string;
+        data: string;
+        annotations?: {
+          audience?: ("user" | "assistant")[];
+          priority?: number;
+        };
+      }
   )[];
 }
 export interface GatewayEvent {

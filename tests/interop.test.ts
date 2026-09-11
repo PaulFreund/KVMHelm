@@ -12,6 +12,7 @@ import { Core } from "../server/core.js";
 import { PluginHost } from "../server/plugins.js";
 import { serve } from "../server/server.js";
 import { scopes } from "../shared/contracts.js";
+import { imagePresentation } from "../server/mcp.js";
 test("HTTP and stdio return MCP images and arbitrate through the same daemon", async () => {
   const dir = await mkdtemp(join(tmpdir(), "kvmhelm-interop-"));
   const store = new Store(dir),
@@ -63,6 +64,7 @@ test("HTTP and stdio return MCP images and arbitrate through the same daemon", a
     await stdio.connect(bridge);
     assert.ok(http.getInstructions()?.includes("computer.reference"));
     assert.equal(stdio.getInstructions(), http.getInstructions());
+    assert.ok(stdio.getInstructions()?.includes(imagePresentation));
     assert.equal((await http.listTools()).tools.length, 6);
     assert.equal((await stdio.listTools()).tools.length, 6);
     const opened: any = await http.callTool({
@@ -73,7 +75,7 @@ test("HTTP and stdio return MCP images and arbitrate through the same daemon", a
         request_id: "open",
       },
     });
-    assert.equal(opened.isError, false);
+    assert.equal(opened.isError, false, JSON.stringify(opened.structuredContent));
     assert.equal(opened.content[1].type, "image");
     assert.equal(opened.content[1].mimeType, "image/png");
     const denied: any = await stdio.callTool({
@@ -90,6 +92,32 @@ test("HTTP and stdio return MCP images and arbitrate through the same daemon", a
       arguments: { computer_id: d.device_id, mode: "observe" },
     });
     assert.equal(observed.content[1].type, "image");
+    for (const result of [opened, observed]) {
+      assert.deepEqual(result.content[1].annotations, {
+        audience: ["user", "assistant"],
+        priority: 1,
+      });
+      assert.equal(result.content[2].text, imagePresentation);
+      assert.deepEqual(result.content[2].annotations.audience, ["assistant"]);
+      assert.deepEqual(
+        JSON.parse(result.content[0].text),
+        result.structuredContent,
+      );
+      assert.ok(Buffer.from(result.content[1].data, "base64").length > 100);
+    }
+    assert.ok(
+      !denied.content.some(
+        (c: any) => c.type === "image" || c.text === imagePresentation,
+      ),
+    );
+    const screenshot: any = await stdio.callTool({
+      name: "computer_screenshot",
+      arguments: {
+        session_id: observed.structuredContent.session.session_id,
+      },
+    });
+    assert.equal(screenshot.content[1].type, "image");
+    assert.equal(screenshot.content[2].text, imagePresentation);
     const info = opened.structuredContent.frames[0];
     const acted: any = await http.callTool({
       name: "computer",
@@ -105,6 +133,8 @@ test("HTTP and stdio return MCP images and arbitrate through the same daemon", a
       },
     });
     assert.equal(acted.isError, false);
+    assert.equal(acted.content[1].type, "image");
+    assert.equal(acted.content[2].text, imagePresentation);
     assert.equal(acted.structuredContent.actions[0].status, "sent");
     await http.callTool({
       name: "close_computer",
@@ -121,25 +151,50 @@ test("HTTP and stdio return MCP images and arbitrate through the same daemon", a
     assert.equal(acquired.isError, false);
     // Keep the same stdio process alive while its upstream session disappears.
     await daemon.close();
-    daemon = await serve(core, plugins, { host: "127.0.0.1", port, origins: [] });
+    daemon = await serve(core, plugins, {
+      host: "127.0.0.1",
+      port,
+      origins: [],
+    });
     const interrupted: any = await stdio.callTool({
-      name: "computer_control", arguments: {
+      name: "computer_control",
+      arguments: {
         session_id: observed.structuredContent.session.session_id,
-        request_id: "must-not-replay", operation: "acquire",
+        request_id: "must-not-replay",
+        operation: "acquire",
       },
     });
-    assert.equal(interrupted.structuredContent.error.code, "MCP_CONNECTION_LOST");
-    const recovered: any = await stdio.callTool({ name: "list_computers", arguments: {} });
+    assert.equal(
+      interrupted.structuredContent.error.code,
+      "MCP_CONNECTION_LOST",
+    );
+    const recovered: any = await stdio.callTool({
+      name: "list_computers",
+      arguments: {},
+    });
     assert.equal(recovered.isError, false);
     assert.equal(recovered.structuredContent.computers[0].lease, null);
-    const reopened: any = await stdio.callTool({ name: "open_computer", arguments: { computer_id: d.device_id, mode: "observe" } });
+    const reopened: any = await stdio.callTool({
+      name: "open_computer",
+      arguments: { computer_id: d.device_id, mode: "observe" },
+    });
     assert.equal(reopened.content[1].type, "image");
     await daemon.close();
-    const offline: any = await stdio.callTool({ name: "list_computers", arguments: {} });
+    const offline: any = await stdio.callTool({
+      name: "list_computers",
+      arguments: {},
+    });
     assert.equal(offline.structuredContent.error.code, "MCP_CONNECTION_LOST");
-    daemon = await serve(core, plugins, { host: "127.0.0.1", port, origins: [] });
+    daemon = await serve(core, plugins, {
+      host: "127.0.0.1",
+      port,
+      origins: [],
+    });
     // A read-only tool automatically recovers even before tools/list is called.
-    assert.equal((await stdio.callTool({ name: "list_computers", arguments: {} })).isError, false);
+    assert.equal(
+      (await stdio.callTool({ name: "list_computers", arguments: {} })).isError,
+      false,
+    );
     assert.equal((await stdio.listTools()).tools.length, 6);
     await stdio.close();
     await new Promise((r) => setTimeout(r, 400));

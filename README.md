@@ -136,6 +136,12 @@ Die Vorlage veröffentlicht nur auf Host-Loopback. Für bewusst gewünschten LAN
 
 ## Daten und Betriebsgrenzen
 
+### Screenshots in MCP-Chats
+
+`open_computer`, `computer_screenshot` und bildliefernde `computer`-Aufrufe geben echte MCP-ImageContent-Blöcke zurück. Diese sind mit `audience: ["user", "assistant"]` und Priorität 1 markiert. Serveranweisungen, Screenshot-Toolbeschreibungen und ein zusätzlicher Hinweis in jeder Bildantwort fordern den Agenten auf, vom Nutzer angeforderte Bilder ausdrücklich in seine sichtbare Antwort einzubinden. Die JSON-Metadaten bleiben unverändert im ersten Textblock und in `structuredContent`.
+
+Das sind Darstellungshinweise, keine Garantie: Der MCP-Host entscheidet, ob er Toolbilder anzeigt und welche Bildanhänge eine Antwort unterstützt. Nur eine textliche Beschreibung bedeutet nicht, dass der Nutzer das Bild gesehen hat. Unterstützt der Client keine Darstellung, soll der Agent das offen sagen. Es werden dafür keine öffentlichen Bild-URLs, externen Uploads oder serverseitig gespeicherten Screenshots erzeugt. Maßgeblich ist der [MCP-Annotations-Vertrag](https://modelcontextprotocol.io/specification/2025-11-25/schema#annotations).
+
 SQLite enthält Gerätekonfiguration, Token-Hashes und gemeinsame UI-Präferenzen. AES-256-GCM-Gerätesecrets und der Masterkey liegen außerhalb des Konfigurationsverzeichnisses. Ein Konfigurationsbackup darf den Secretbereich nicht ungeschützt einschließen. Core speichert keine Medien oder Eingabetexte. RAM-/OS-Swap und Speicherung durch einen MCP-Host sind davon unabhängig.
 
 Für ein konsistentes Backup den Daemon stoppen und den Konfigurationsordner sowie separat verschlüsselt den Secretordner sichern. Restore bei gestopptem Daemon mit derselben Version; abgeleitete Sessions und Leases überleben keinen Neustart. Schema v1 wird geprüft, unbekannte neuere Schemata müssen abgewiesen werden. Künftige Schemaänderungen benötigen vorher ein Backup und einen versionierten Migrationspfad.
