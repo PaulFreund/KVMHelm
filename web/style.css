@@ -1223,6 +1223,28 @@ meter {
 .extension-field textarea {
   width: 100%;
 }
+.extension-field fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 10px;
+  max-height: 170px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+}
+.extension-field legend {
+  padding: 0 4px;
+}
+.extension-field fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.extension-field fieldset input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
 .extension-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1232,6 +1254,12 @@ meter {
 .extension-panel summary {
   cursor: pointer;
   font-size: 12px;
+}
+.extension-log mark {
+  color: var(--text);
+  background: #f5a623;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 .plugin-notices {
   position: fixed;

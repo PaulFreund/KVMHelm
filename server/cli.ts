@@ -50,6 +50,12 @@ const secretDir = resolve(
 );
 const patFile = resolve(v["pat-file"] ?? join(secretDir, "cli.pat"));
 const url = v.url ?? process.env.KVMHELM_URL ?? "http://127.0.0.1:8765";
+const host = v.host ?? process.env.KVMHELM_HOST ?? "127.0.0.1";
+const port = v.port ?? process.env.KVMHELM_PORT ?? "8765";
+const lanHost = v["lan-host"] ?? process.env.KVMHELM_LAN_HOST;
+const lanPort = v["lan-port"] ?? process.env.KVMHELM_LAN_PORT ?? "8766";
+const cert = v.cert ?? process.env.KVMHELM_CERT;
+const key = v.key ?? process.env.KVMHELM_KEY;
 async function pat() {
   return (process.env.KVMHELM_PAT ?? (await readFile(patFile, "utf8"))).trim();
 }
@@ -231,28 +237,28 @@ async function main() {
   const plugins = new PluginHost(core, join(dir, "plugins"));
   await plugins.load();
   const instance = await serve(core, plugins, {
-    host: v.host ?? "127.0.0.1",
-    port: Number(v.port ?? 8765),
-    cert: v["lan-host"] ? undefined : v.cert,
-    key: v["lan-host"] ? undefined : v.key,
+    host,
+    port: Number(port),
+    cert: lanHost ? undefined : cert,
+    key: lanHost ? undefined : key,
     origins: v.origin ?? [],
     dev: v.dev,
   });
-  const lanInstance = v["lan-host"]
+  const lanInstance = lanHost
     ? await serve(core, plugins, {
-        host: v["lan-host"],
-        port: Number(v["lan-port"] ?? 8766),
-        cert: v.cert,
-        key: v.key,
+        host: lanHost,
+        port: Number(lanPort),
+        cert,
+        key,
         origins: v.origin ?? [],
       })
     : undefined;
   console.error(
-    `KVMHelm listening on ${v.cert && !v["lan-host"] ? "https" : "http"}://${v.host ?? "127.0.0.1"}:${v.port ?? 8765}`,
+    `KVMHelm listening on ${cert && !lanHost ? "https" : "http"}://${host}:${port}`,
   );
   if (lanInstance)
     console.error(
-      `KVMHelm LAN listening on https://${v["lan-host"]}:${v["lan-port"] ?? 8766}`,
+      `KVMHelm LAN listening on https://${lanHost}:${lanPort}`,
     );
   let stopping = false;
   const stop = async () => {

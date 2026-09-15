@@ -147,13 +147,15 @@ export interface Preferences {
 export interface PluginPanelField {
   id: string;
   label: string;
-  type: "string-list" | "number";
+  type: "string-list" | "number" | "multi-select";
   value: string[] | number;
+  options?: { value: string; label: string }[];
 }
 export interface PluginPanel {
   id: string;
   title: string;
   text: string;
+  highlights?: { start: number; end: number }[];
   device_id?: string;
   slot: "kvm.sidepanel" | "settings.plugins" | "overview.badge";
   fields?: PluginPanelField[];

@@ -13,7 +13,7 @@
     "setup": "node scripts/setup.mjs",
     "dev": "tsx server/cli.ts serve --dev",
     "build": "vue-tsc --noEmit && tsc -p tsconfig.server.json && vite build",
-    "start": "node dist/server/cli.js serve",
+    "start": "node --env-file-if-exists=.env dist/server/cli.js serve",
     "cli": "tsx server/cli.ts",
     "test": "tsx --test tests/*.test.ts",
     "check": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit"

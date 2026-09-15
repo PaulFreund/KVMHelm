@@ -236,6 +236,18 @@ export class PluginHost {
           id: z.string().max(100),
           title: z.string().max(100),
           text: z.string().max(16000),
+          highlights: z
+            .array(
+              z
+                .object({
+                  start: z.number().int().nonnegative(),
+                  end: z.number().int().positive(),
+                })
+                .strict()
+                .refine((range) => range.end > range.start),
+            )
+            .max(500)
+            .optional(),
           device_id: z.string().optional(),
           fields: z
             .array(
@@ -243,13 +255,44 @@ export class PluginHost {
                 .object({
                   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
                   label: z.string().max(100),
-                  type: z.enum(["string-list", "number"]),
+                  type: z.enum(["string-list", "number", "multi-select"]),
                   value: z.union([
                     z.array(z.string().max(200)).max(100),
                     z.number().finite(),
                   ]),
+                  options: z
+                    .array(
+                      z
+                        .object({
+                          value: z.string().min(1).max(50),
+                          label: z.string().min(1).max(100),
+                        })
+                        .strict(),
+                    )
+                    .max(100)
+                    .optional(),
                 })
-                .strict(),
+                .strict()
+                .superRefine((field, context) => {
+                  if (field.type === "multi-select") {
+                    if (!Array.isArray(field.value) || !field.options?.length)
+                      context.addIssue({
+                        code: "custom",
+                        message:
+                          "multi-select requires array value and options",
+                      });
+                    else {
+                      const allowed = new Set(
+                        field.options.map((option) => option.value),
+                      );
+                      if (field.value.some((value) => !allowed.has(value)))
+                        context.addIssue({
+                          code: "custom",
+                          message: "multi-select value is not declared",
+                        });
+                    }
+                  }
+                }),
             )
             .max(12)
             .optional(),
@@ -415,9 +458,20 @@ export class PluginHost {
       const field = panel.fields?.find((x) => x.id === key);
       if (!field) throw new GatewayError("INVALID_ARGUMENT");
       parsed[key] =
-        field.type === "string-list"
-          ? z.array(z.string().max(200)).max(100).parse(value)
-          : z.number().finite().parse(value);
+        field.type === "number"
+          ? z.number().finite().parse(value)
+          : (() => {
+              const result = z.array(z.string().max(200)).max(100).parse(value);
+              if (
+                field.type === "multi-select" &&
+                result.some(
+                  (selected) =>
+                    !field.options?.some((option) => option.value === selected),
+                )
+              )
+                throw new GatewayError("INVALID_ARGUMENT");
+              return result;
+            })();
     }
     if (this.calls.size >= 32) throw new GatewayError("RESOURCE_LIMIT");
     const request_id = randomUUID();

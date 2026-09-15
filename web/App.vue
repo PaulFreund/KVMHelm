@@ -6,6 +6,11 @@ import ConsoleView from "./components/ConsoleView.vue";
 import ExtensionPanel from "./components/ExtensionPanel.vue";
 import { useDeviceEditor } from "./use-device-editor";
 import { listenEvents } from "./event-stream";
+import {
+  armNotificationSound,
+  closeNotificationSound,
+  playNotificationSound,
+} from "./notification-sound";
 import type {
   DeviceView,
   GatewayEvent,
@@ -223,8 +228,10 @@ function listen() {
         !notices.value.some(
           (n) => n.event_id === e.event_id && n.instance_id === e.instance_id,
         )
-      )
+      ) {
         notices.value = [e, ...notices.value].slice(0, 5);
+        playNotificationSound();
+      }
       if (e.type === "plugin.panel") {
         panelVersion++;
         const extension = extensions.value.find(
@@ -252,6 +259,8 @@ function listen() {
   );
 }
 onMounted(async () => {
+  window.addEventListener("pointerdown", armNotificationSound);
+  window.addEventListener("keydown", armNotificationSound);
   try {
     await load();
   } catch {}
@@ -262,18 +271,23 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   clearInterval(timer);
   stopEvents?.();
+  window.removeEventListener("pointerdown", armNotificationSound);
+  window.removeEventListener("keydown", armNotificationSound);
+  closeNotificationSound();
 });
 </script>
 <template>
   <div
     v-if="logged && notices.length"
     class="plugin-notices"
-    aria-live="polite"
+    aria-label="Benachrichtigungen"
+    aria-live="assertive"
   >
     <div
       v-for="n in notices"
       :key="n.instance_id + ':' + n.event_id"
       class="plugin-notice"
+      role="alert"
     >
       <strong>{{
         devices.find((d) => d.device_id === n.device_id)?.name ?? "Erweiterung"

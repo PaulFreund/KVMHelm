@@ -28,7 +28,7 @@ test(
     );
     await writeFile(
       join(path, "index.mjs"),
-      `let device;const panel=()=>process.send({type:'panel',panel:{id:'notes',title:'Live notes',device_id:device,slot:'kvm.sidepanel',text:'Safe text <script>bad()</script>',fields:[{id:'terms',label:'Notify strings',type:'string-list',value:['Hello']}],actions:[{id:'save',label:'Save strings'}]}});process.on('message',m=>{if(m.type==='initialize'){device=m.devices[0];process.send({type:'ready'});panel();}if(m.type==='health')process.send({type:'health'});if(m.type==='action'){process.send({type:'panel',panel:{id:'notes',title:'Live notes',device_id:device,slot:'kvm.sidepanel',text:m.values.terms.join(', '),fields:[{id:'terms',label:'Notify strings',type:'string-list',value:m.values.terms}],actions:[{id:'save',label:'Save strings'}]}});process.send({type:'notification',device_id:device,text:'A new match'});process.send({type:'action.result',request_id:m.request_id,ok:true});}if(m.type==='dispose')process.exit(0);});`,
+      `let device;const fields=(terms=['Hello'],languages=[])=>[{id:'terms',label:'Notify strings',type:'string-list',value:terms},{id:'languages',label:'Expected languages',type:'multi-select',value:languages,options:[{value:'de',label:'German'},{value:'en',label:'English'}]}];const panel=()=>process.send({type:'panel',panel:{id:'notes',title:'Live notes',device_id:device,slot:'kvm.sidepanel',text:'Safe text <script>bad()</script>',highlights:[{start:5,end:9}],fields:fields(),actions:[{id:'save',label:'Save strings'}]}});process.on('message',m=>{if(m.type==='initialize'){device=m.devices[0];process.send({type:'ready'});panel();}if(m.type==='health')process.send({type:'health'});if(m.type==='action'){process.send({type:'panel',panel:{id:'notes',title:'Live notes',device_id:device,slot:'kvm.sidepanel',text:m.values.terms.join(', ')+' / '+m.values.languages.join(','),highlights:[{start:0,end:5}],fields:fields(m.values.terms,m.values.languages),actions:[{id:'save',label:'Save strings'}]}});process.send({type:'notification',device_id:device,text:'A new match'});process.send({type:'action.result',request_id:m.request_id,ok:true});}if(m.type==='dispose')process.exit(0);});`,
     );
     await f.plugins.install({ path, devices: [f.device.device_id] });
     const daemon = await serve(f.core, f.plugins, {
@@ -53,12 +53,61 @@ test(
         f.token.token,
       );
       await page.goto(base + "/computers");
+      await page.evaluate(`
+        window.AudioContext = class NotificationAudioContext {
+          state = "running";
+          currentTime = 0;
+          destination = {};
+          constructor() {
+            window.notificationAudioContexts =
+              (window.notificationAudioContexts || 0) + 1;
+          }
+          async resume() {}
+          async close() { this.state = "closed"; }
+          createGain() {
+            return {
+              gain: {
+                setValueAtTime() {},
+                exponentialRampToValueAtTime() {},
+              },
+              connect() {},
+            };
+          }
+          createOscillator() {
+            return {
+              type: "sine",
+              frequency: { setValueAtTime() {} },
+              connect() {},
+              start() {
+                window.notificationToneStarts =
+                  (window.notificationToneStarts || 0) + 1;
+              },
+              stop() {},
+            };
+          }
+        };
+      `);
+      expect(await page.evaluate(() => window.AudioContext?.name)).toBe(
+        "NotificationAudioContext",
+      );
       await expect(page.locator(".screen img")).toBeVisible();
       await expect(page.locator(".plugin-notice")).toHaveCount(0);
       await expect(
         page.getByRole("complementary", { name: "Seitenpanel Fixture" }),
       ).toHaveCount(0);
       await page.getByRole("button", { name: /Seitenpanel anzeigen/ }).click();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (
+                window as typeof window & {
+                  notificationAudioContexts?: number;
+                }
+              ).notificationAudioContexts ?? 0,
+          ),
+        )
+        .toBe(1);
       const side = page.getByRole("complementary", {
         name: "Seitenpanel Fixture",
       });
@@ -66,14 +115,27 @@ test(
       await expect(
         side.getByText("Safe text <script>bad()</script>", { exact: true }),
       ).toBeVisible();
+      await expect(side.locator("mark")).toHaveText("text");
       const screenBox = await page.locator(".screen").boundingBox(),
         sideBox = await side.boundingBox();
       assert.ok(sideBox!.x >= screenBox!.x + screenBox!.width);
       await side.getByText("Einstellungen", { exact: true }).click();
       await side.getByLabel("Notify strings").fill("Alpha\nBeta");
+      await side.getByLabel("German").check();
+      await side.getByLabel("English").check();
       await side.getByRole("button", { name: "Save strings" }).click();
-      await expect(side.locator("pre")).toHaveText("Alpha, Beta");
+      await expect(side.locator("pre")).toHaveText("Alpha, Beta / de,en");
+      await expect(side.locator("mark")).toHaveText("Alpha");
       await expect(page.locator(".plugin-notice")).toHaveCount(1);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (window as typeof window & { notificationToneStarts?: number })
+                .notificationToneStarts ?? 0,
+          ),
+        )
+        .toBe(2);
       await page.reload();
       await expect(side).toBeVisible();
       await expect(page.locator(".plugin-notice")).toHaveCount(0);

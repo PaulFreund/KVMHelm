@@ -26,7 +26,7 @@ node dist/server/cli.js device test DEVICE_ID
 node dist/server/cli.js device benchmark DEVICE_ID
 ```
 
-`--data`, `--secrets`, `--pat-file` und `--url` überschreiben Pfade/Ziel. Alternativ `KVMHELM_DATA`, `KVMHELM_SECRETS`, `KVMHELM_URL`, `KVMHELM_PAT`. PAT-Werte gehören nicht in Kommandozeilenargumente. Dateien mit Secrets müssen unter Windows per NTFS-ACL auf den Dienstbenutzer beschränkt werden; POSIX-Modi alleine setzen keine Windows-ACL.
+`--data`, `--secrets`, `--pat-file` und `--url` überschreiben Pfade/Ziel. Alternativ unterstützt die CLI `KVMHELM_DATA`, `KVMHELM_SECRETS`, `KVMHELM_URL`, `KVMHELM_PAT` sowie für Listener `KVMHELM_HOST`, `KVMHELM_PORT`, `KVMHELM_LAN_HOST`, `KVMHELM_LAN_PORT`, `KVMHELM_CERT` und `KVMHELM_KEY`. `npm start` lädt eine vorhandene lokale `.env`. PAT-Werte gehören nicht in Kommandozeilenargumente. Dateien mit Secrets müssen unter Windows per NTFS-ACL auf den Dienstbenutzer beschränkt werden; POSIX-Modi alleine setzen keine Windows-ACL.
 
 ## Unterstützte Geräte
 

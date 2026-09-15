@@ -34,12 +34,12 @@ Nachrichten zum Host:
 | `devices`      | Antwort enthält ausschließlich freigegebene IDs, Namen und Capabilities |
 | `subscribe`    | `id`, `device_id`, `source: "audio"` oder `"video"`                     |
 | `unsubscribe`  | `id` des eigenen Consumers                                              |
-| `panel`        | `panel: {id,title,text,device_id?,slot}`                                |
+| `panel`        | `panel: {id,title,text,highlights?,device_id?,slot}`                    |
 | `notification` | `device_id`, `text`                                                     |
 
 Hostausgabe: `media` mit Abonnement-ID, Geräte-ID und `chunk`. Audio enthält `format=pcm_s16le`, `sample_rate=48000`, `channels=2`, `sequence`, `timestamp_ms`, `connection_generation`, `discontinuity`, `data:Buffer`. Zeitstempel sind lokale monotone Empfangszeiten, keine behaupteten samplegenauen Hardwarezeiten. Video liefert Frame-Metadaten und vollständige PNG/JPEG-Buffer. Ausfälle senden `gap` mit Code.
 
-Panels und Benachrichtigungen werden als Text gerendert, nie über `v-html`. Alle UI-Updates laufen geordnet durch denselben Eventkanal; ein Plugin muss Inhaltsupdates vor der dazugehörigen Benachrichtigung senden. Events haben `event_id`, Zeit, Typ, Geräte-ID und `data.plugin_id`. Benachrichtigungen bleiben ausschließlich in der Weboberfläche und deren begrenztem RAM-Verlauf.
+Panels und Benachrichtigungen werden als Text gerendert, nie über `v-html`. Optionale `highlights` sind begrenzte Start-/Endbereiche im Paneltext und werden als sichere `mark`-Elemente dargestellt. Alle UI-Updates laufen geordnet durch denselben Eventkanal; ein Plugin muss Inhaltsupdates vor der dazugehörigen Benachrichtigung senden. Events haben `event_id`, Zeit, Typ, Geräte-ID und `data.plugin_id`. Neue Live-Benachrichtigungen bleiben ausschließlich in der Weboberfläche und deren begrenztem RAM-Verlauf; nach der ersten Browserinteraktion begleitet sie ein kurzer Signalton.
 
 Ein separates Plugin konfiguriert seine eigene Secretquelle; der Host übermittelt keine Gerätepasswörter, Admin-PATs oder Zugangsdaten externer Dienste. `secretRefs` sind Referenzen, kein allgemeiner Lesezugriff auf den Secretstore. Plugin-eigene optionale Persistenz liegt unter dem eigenen Datenpfad. Der Kern implementiert keinen Medienrecorder.
 
