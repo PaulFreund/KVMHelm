@@ -41,6 +41,69 @@ pub type Body = UnsyncBoxBody<Bytes, BoxError>;
 pub type Assets = &'static [(&'static str, &'static [u8])];
 const BODY_LIMIT: usize = 256 * 1024;
 
+// Express's existing routes are case-insensitive and allow one trailing slash.
+// Normalize only literal route words; parameter values retain their spelling.
+fn route_path(path: &str) -> String {
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let mut parts = path.split('/').map(str::to_owned).collect::<Vec<_>>();
+    if parts.len() == 2
+        && matches!(
+            parts[1].to_ascii_lowercase().as_str(),
+            "healthz" | "readyz" | "mcp"
+        )
+    {
+        parts[1].make_ascii_lowercase();
+    } else if parts.get(1).is_some_and(|p| p.eq_ignore_ascii_case("api")) {
+        parts[1].make_ascii_lowercase();
+        if parts.get(2).is_some_and(|p| p.eq_ignore_ascii_case("v1")) {
+            parts[2].make_ascii_lowercase();
+            if let Some(resource) = parts.get_mut(3) {
+                resource.make_ascii_lowercase();
+            }
+            match parts.get(3).map(String::as_str) {
+                Some("devices" | "sessions") => {
+                    if let Some(operation) = parts.get_mut(5) {
+                        operation.make_ascii_lowercase();
+                    }
+                }
+                Some("plugins")
+                    if parts
+                        .get(5)
+                        .is_some_and(|p| p.eq_ignore_ascii_case("panels"))
+                        && parts.len() == 8 =>
+                {
+                    parts[5].make_ascii_lowercase();
+                    parts[7].make_ascii_lowercase();
+                }
+                _ => (),
+            }
+        }
+    } else {
+        return path.to_owned();
+    }
+    parts.join("/")
+}
+
+fn route_parameter(value: &str) -> Result<String> {
+    // decode_utf8 rejects malformed Unicode; reject incomplete percent escapes
+    // as well. A decoded slash stays inside this one parameter, and decoding
+    // happens exactly once (a literal '+' is not a form-encoded space).
+    let bytes = value.as_bytes();
+    for (i, byte) in bytes.iter().enumerate() {
+        if *byte == b'%'
+            && (i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_hexdigit()
+                || !bytes[i + 2].is_ascii_hexdigit())
+        {
+            return Err(GatewayError::invalid());
+        }
+    }
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8()
+        .map(|v| v.into_owned())
+        .map_err(|_| GatewayError::invalid())
+}
+
 /// Match the existing express-rate-limit default: individual IPv4 addresses,
 /// including IPv4-mapped peers, and a shared /56 window for native IPv6 peers.
 pub fn rate_limit_key(address: IpAddr) -> String {
@@ -501,7 +564,7 @@ async fn entry(state: Arc<State>, request: Request<Incoming>) -> Response<Body> 
 }
 async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<Response<Body>> {
     let (mut parts, body) = request.into_parts();
-    let path = parts.uri.path().to_owned();
+    let path = route_path(parts.uri.path());
     if header(&parts.headers, "host")?.is_none_or(|value| !state.authorities.contains(value))
         || header(&parts.headers, "origin")?.is_some_and(|value| !state.origins.contains(value))
     {
@@ -527,7 +590,7 @@ async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<
     }
     let api = path == "/api" || path.starts_with("/api/") || path == "/mcp";
     if !api {
-        return static_asset(&state, &path, &parts.method);
+        return static_asset(&state, parts.uri.path(), &parts.method);
     }
     let login = path == "/api/v1/login" && parts.method == Method::POST;
     if login
@@ -715,7 +778,7 @@ async fn dispatch(
     auth: Option<(Identity, Option<String>)>,
     peer: Connection,
 ) -> Result<Response<Body>> {
-    let path = parts.uri.path();
+    let path = route_path(parts.uri.path());
     let method = parts.method.clone();
     if path == "/api/v1/login" && method == Method::POST {
         if header(&parts.headers, "origin")?.is_none_or(|value| !state.origins.contains(value)) {
@@ -758,11 +821,30 @@ async fn dispatch(
             body.map_err(|never| match never {}).boxed_unsync(),
         ));
     }
-    let route = path
+    let mut segments = path
         .strip_prefix("/api/v1/")
         .unwrap_or("")
         .split('/')
+        .map(str::to_owned)
         .collect::<Vec<_>>();
+    // Only Express-style named parameters are URL-decoded. Literal route
+    // words such as %64evices must not become a different endpoint.
+    let parameter_indices: &[usize] = match segments.first().map(String::as_str) {
+        Some("devices" | "sessions" | "tokens" | "tools") => &[1],
+        Some("plugins")
+            if segments.get(2).is_some_and(|s| s == "panels") && segments.len() == 5 =>
+        {
+            &[1, 3]
+        }
+        Some("plugins") => &[1, 2],
+        _ => &[],
+    };
+    for &index in parameter_indices {
+        if let Some(value) = segments.get_mut(index) {
+            *value = route_parameter(value)?;
+        }
+    }
+    let route = segments.iter().map(String::as_str).collect::<Vec<_>>();
     let value = match (method.clone(), route.as_slice()) {
         (Method::GET, ["me"]) => {
             let token = state.core.auth.check(&identity, None, None)?;

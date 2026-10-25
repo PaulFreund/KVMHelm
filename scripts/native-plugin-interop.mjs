@@ -37,6 +37,7 @@ let daemon,
   pat = "",
   logs = "";
 const pluginPath = join(dir, "panel-plugin");
+const panelId = "notes /Ä+%25";
 const manifest = {
   id: "local.panels",
   version: "1",
@@ -56,7 +57,7 @@ const manifest = {
 const pluginSource = `
 let device,own,permissions,devices,secretRefs,received=0,rejected=0,requests=0,healthy=true;
 const fields=(terms=['Hello'],languages=[],threshold=3)=>[{id:'terms',label:'Notify strings',type:'string-list',value:terms},{id:'languages',label:'Expected languages',type:'multi-select',value:languages,options:[{value:'de',label:'German'},{value:'en',label:'English'}]},{id:'threshold',label:'Threshold',type:'number',value:threshold}];
-const publish=(text='Safe text <script>bad()</script>',f=fields())=>process.send({type:'panel',panel:{id:'notes',title:'Live notes',device_id:device,slot:'kvm.sidepanel',text,highlights:[{start:5,end:9}],fields:f,actions:['save','silent','crash','flood','silence-health','block'].map(id=>({id,label:id==='save'?'Save strings':id}))}});
+const publish=(text='Safe text <script>bad()</script>',f=fields())=>process.send({type:'panel',panel:{id:${JSON.stringify(panelId)},title:'Live notes',device_id:device,slot:'kvm.sidepanel',text,highlights:[{start:5,end:9}],fields:f,actions:['save','silent','crash','flood','silence-health','block'].map(id=>({id,label:id==='save'?'Save strings':id}))}});
 const summary=()=>process.send({type:'panel',panel:{id:'runtime',title:'Runtime',device_id:device,slot:'kvm.sidepanel',text:JSON.stringify({pid:process.pid,broker:process.ppid,own,permissions,devices,secretRefs,received,rejected,requests,leaked:!!process.env.KVMHELM_SYNTHETIC_SECRET,connected:process.connected}),actions:[]}});
 process.on('message',m=>{
  if(m.type==='initialize'){device=m.devices[0];devices=m.devices;own=m.data_path;permissions=m.permissions;secretRefs=m.secret_refs;process.send({type:'ready'});publish();summary();}
@@ -68,7 +69,7 @@ process.on('message',m=>{
  if(m.type==='action'){
    requests++;
    if(m.action==='crash')process.exit(42);
-   if(m.action==='save'){publish(m.values.terms.join(', ')+' / '+m.values.languages.join(','),fields(m.values.terms,m.values.languages,m.values.threshold));process.send({type:'notification',device_id:device,text:'A new match',reference:{panel_id:'notes',item_id:'match',revision:requests}});}
+   if(m.action==='save'){publish(m.values.terms.join(', ')+' / '+m.values.languages.join(','),fields(m.values.terms,m.values.languages,m.values.threshold));process.send({type:'notification',device_id:device,text:'A new match',reference:{panel_id:${JSON.stringify(panelId)},item_id:'match',revision:requests}});}
    if(m.action==='flood'){for(let n=0;n<40;n++)publish('flood '+n);setTimeout(summary,1200);}
    if(m.action==='silence-health')healthy=false;
    if(m.action==='block'){process.send({type:'action.result',request_id:m.request_id,ok:true});const end=Date.now()+9000;while(Date.now()<end){};return;}
@@ -148,7 +149,7 @@ async function runtime(id = "local.panels") {
 }
 async function action(name, values = {}, id = "local.panels", token = pat) {
   return request(
-    "/plugins/" + id + "/panels/notes/actions",
+    "/plugins/" + id + "/panels/" + encodeURIComponent(panelId) + "/actions",
     "POST",
     { action: name, values },
     token,
@@ -296,7 +297,7 @@ try {
     const p = (await plugins())[0];
     return (
       p.status === "running" &&
-      p.panels.find((p) => p.id === "notes")?.text.startsWith("Safe text")
+      p.panels.find((p) => p.id === panelId)?.text.startsWith("Safe text")
     );
   }, "Restart");
   assert.equal(

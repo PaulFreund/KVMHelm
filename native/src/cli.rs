@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -64,6 +64,7 @@ impl Arguments {
                     "port",
                     "cert",
                     "key",
+                    "ca",
                     "origin",
                     "url",
                     "pat-file",
@@ -103,8 +104,35 @@ struct Client {
     url: url::Url,
     pat: zeroize::Zeroizing<String>,
 }
+fn storage_path(args: &Arguments, name: &str, environment: &str) -> Result<PathBuf> {
+    if let Some(path) = args.configured(name, environment) {
+        return Ok(path.into());
+    }
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            GatewayError::message("STORAGE_ERROR", "Set --data/--secrets or a home directory")
+        })?;
+    Ok(home.join(".kvmhelm").join(name))
+}
+fn pat_file(args: &Arguments) -> Result<PathBuf> {
+    if let Some(path) = args.value("pat-file") {
+        return Ok(path.into());
+    }
+    // The fixed process environment takes precedence and needs no filesystem.
+    if std::env::var_os("KVMHELM_PAT").is_some() {
+        return Ok(PathBuf::new());
+    }
+    Ok(storage_path(args, "secrets", "KVMHELM_SECRETS")?.join("cli.pat"))
+}
 impl Client {
-    fn new(args: &Arguments, secrets: &Path) -> Result<Self> {
+    fn new(args: &Arguments) -> Result<Self> {
+        let (http, url) = Self::transport(args)?;
+        let pat = crate::mcp_bridge::read_pat(&pat_file(args)?)?;
+        Ok(Self { http, url, pat })
+    }
+    fn transport(args: &Arguments) -> Result<(reqwest::Client, url::Url)> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let url = url::Url::parse(
             &args
@@ -121,21 +149,33 @@ impl Client {
         {
             return Err(GatewayError::new("INVALID_ADDRESS"));
         }
-        let pat = crate::mcp_bridge::read_pat(
-            &args
-                .value("pat-file")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| secrets.join("cli.pat")),
-        )?;
-        let http = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(40))
+            .timeout(Duration::from_secs(40));
+        if let Some(path) = args.configured("ca", "KVMHELM_CA") {
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)
+                .and_then(|file| file.take(1024 * 1024 + 1).read_to_end(&mut bytes))
+                .map_err(|_| GatewayError::new("TLS_CERTIFICATE_ERROR"))?;
+            if bytes.len() > 1024 * 1024 {
+                return Err(GatewayError::new("RESOURCE_LIMIT"));
+            }
+            let certs = reqwest::Certificate::from_pem_bundle(&bytes)
+                .map_err(|_| GatewayError::new("TLS_CERTIFICATE_ERROR"))?;
+            if certs.is_empty() {
+                return Err(GatewayError::new("TLS_CERTIFICATE_ERROR"));
+            }
+            for cert in certs {
+                builder = builder.add_root_certificate(cert);
+            }
+        }
+        let http = builder
             .build()
             .map_err(|_| GatewayError::new("INTERNAL_ERROR"))?;
-        Ok(Self { http, url, pat })
+        Ok((http, url))
     }
     async fn request(&self, path: &str, method: Method, body: Option<Value>) -> Result<Value> {
         let url = self
@@ -239,26 +279,60 @@ fn port(value: Option<String>, default: u16) -> Result<u16> {
         .map(|v| v.parse().map_err(|_| GatewayError::invalid()))
         .unwrap_or(Ok(default))
 }
+fn replay_budget(value: Option<String>) -> Result<usize> {
+    let mb = value
+        .map(|v| v.parse::<f64>())
+        .transpose()
+        .map_err(|_| GatewayError::invalid())?
+        .unwrap_or(64.0);
+    let bytes = mb * 1024.0 * 1024.0;
+    if !bytes.is_finite() || bytes < 0.0 || bytes >= usize::MAX as f64 {
+        return Err(GatewayError::invalid());
+    }
+    Ok(bytes.floor() as usize)
+}
 pub async fn run() -> Result<()> {
     let args = Arguments::parse()?;
     let command = args.positions.first().map(String::as_str).unwrap_or("help");
     if command == "help" {
         println!(
-            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  plugin list|install <directory>|enable|disable|restart|uninstall\n  secrets cleanup\n  doctor\nUse --data and --secrets for separate protected storage locations. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugins optionally require Node (KVMHELM_NODE, beside this executable or PATH). Full API/UI/platform validation, release packaging and performance measurements remain in progress."
+            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  plugin list|install <directory>|enable|disable|restart|uninstall\n  secrets cleanup\n  doctor\n  healthcheck [--url https://localhost:8765 --ca trusted-ca.pem]\nUse --data and --secrets for separate protected storage locations. Remote CLI/MCP TLS trusts --ca or KVMHELM_CA in addition to public roots. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugins optionally require Node (KVMHELM_NODE, beside this executable or PATH). Full API/UI/platform validation, release packaging and performance measurements remain in progress."
         );
         return Ok(());
     }
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .ok_or_else(|| GatewayError::new("STORAGE_ERROR"))?;
-    let data = args
-        .configured("data", "KVMHELM_DATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".kvmhelm/data"));
-    let secrets = args
-        .configured("secrets", "KVMHELM_SECRETS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".kvmhelm/secrets"));
+    if command == "healthcheck" {
+        let (http, url) = Client::transport(&args)?;
+        let response = http
+            .get(url.join("/readyz").map_err(|_| GatewayError::invalid())?)
+            .timeout(Duration::from_secs(4))
+            .send()
+            .await
+            .map_err(|error| crate::transport::network_error(&error))?;
+        if !response.status().is_success() {
+            return Err(GatewayError::new("STORAGE_ERROR"));
+        }
+        // Read only the small readiness body, independently of credentials and
+        // local storage; the daemon's HTTP limits still apply to this request.
+        let mut bytes = Vec::new();
+        let mut response = response;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| GatewayError::new("DEVICE_OFFLINE"))?
+        {
+            if bytes.len() + chunk.len() > 4096 {
+                return Err(GatewayError::new("RESOURCE_LIMIT"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let value: Value =
+            serde_json::from_slice(&bytes).map_err(|_| GatewayError::new("DEVICE_OFFLINE"))?;
+        if value["ok"] != true {
+            return Err(GatewayError::new("STORAGE_ERROR"));
+        }
+        print(value);
+        return Ok(());
+    }
     let sub = args.positions.get(1).map(String::as_str).unwrap_or("");
     if command == "mcp" {
         if args
@@ -270,19 +344,15 @@ pub async fn run() -> Result<()> {
                 "Use --transport stdio",
             ));
         }
-        let client = Client::new(&args, &secrets)?;
-        let pat_file = args
-            .value("pat-file")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| secrets.join("cli.pat"));
-        return crate::mcp_bridge::run(client.http, client.url, pat_file).await;
+        let client = Client::new(&args)?;
+        return crate::mcp_bridge::run(client.http, client.url, pat_file(&args)?).await;
     }
     if command == "doctor"
         || command == "device"
         || command == "plugin"
         || command == "token" && sub != "bootstrap"
     {
-        let client = Client::new(&args, &secrets)?;
+        let client = Client::new(&args)?;
         let value = match (command, sub) {
             ("doctor", _) => {
                 json!({"runtime":"rust","platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"url":client.url.as_str(),"health":client.request("/healthz",Method::GET,None).await?,"diagnostics":client.api("/diagnostics",Method::GET,None).await?})
@@ -386,6 +456,8 @@ pub async fn run() -> Result<()> {
     {
         return Err(GatewayError::invalid());
     }
+    let data = storage_path(&args, "data", "KVMHELM_DATA")?;
+    let secrets = storage_path(&args, "secrets", "KVMHELM_SECRETS")?;
     let store = Store::open(&data).await?;
     let work = async {
         let vault = Secrets::open(&secrets).await?;
@@ -418,17 +490,15 @@ pub async fn run() -> Result<()> {
         let limits = Limits {
             max_sessions: std::env::var("KVMHELM_MAX_SESSIONS").ok().map(|v| v.parse())
                 .transpose().map_err(|_| GatewayError::invalid())?.unwrap_or(128),
-            replay_bytes: std::env::var("KVMHELM_REPLAY_MB").ok().map(|v| v.parse::<usize>())
-                .transpose().map_err(|_| GatewayError::invalid())?.unwrap_or(64)
-                .checked_mul(1024 * 1024).ok_or_else(GatewayError::invalid)?,
+            replay_bytes: replay_budget(std::env::var("KVMHELM_REPLAY_MB").ok())?,
             ..Limits::default()
         };
         let core = Core::new(store.clone(), vault, auth, limits, 120000)?;
         let result = async {
             core.load().await?;
             if command == "demo" {
-                let client = Client::new(&args, &secrets)?;
-                let identity = core.auth.authenticate(&client.pat, "cli")?;
+                let pat = crate::mcp_bridge::read_pat(&pat_file(&args)?)?;
+                let identity = core.auth.authenticate(&pat, "cli")?;
                 for n in 1..=4 {
                     core.save_device(&identity, json!({
                         "name":format!("Lab {n:02} · Simulator"),"driver_id":"simulator",

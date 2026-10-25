@@ -42,6 +42,12 @@ jobs:
       - name: Native plugin IPC, lifecycle and existing Vue panels
         shell: bash
         run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-plugin-interop.mjs
+      - name: Native Vue administration, input, journal recovery and touch
+        shell: bash
+        run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-ui-interop.mjs
+      - name: Same Vue acceptance against reference TypeScript daemon
+        shell: bash
+        run: KVMHELM_TEST_DAEMON=typescript node scripts/native-ui-interop.mjs
   docker:
     runs-on: ubuntu-latest
     steps:

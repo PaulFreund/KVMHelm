@@ -1290,6 +1290,96 @@ async fn empty_plugin_inventory_and_diagnostics_work_without_the_optional_node_r
     f.close().await;
 }
 
+#[tokio::test]
+async fn reference_route_spelling_and_encoded_parameters_keep_authorization_and_limits() {
+    let f = Fixture::limited(Options {
+        port: 0,
+        media_per_minute: 1,
+        ..Options::default()
+    })
+    .await;
+    let listed = f.request("/API/V1/DEVICES/", Method::GET, None).await;
+    assert_eq!(listed.status(), 200);
+    let devices: Value = listed.json().await.unwrap();
+    assert_eq!(devices[0]["device_id"], f.id);
+    let encoded = format!("%{:02X}{}", f.id.as_bytes()[0], &f.id[1..]);
+    assert_eq!(
+        f.request(
+            &format!("/API/V1/DEVICES/{encoded}/TeSt/"),
+            Method::POST,
+            Some(json!({}))
+        )
+        .await
+        .status(),
+        200
+    );
+    assert_eq!(
+        f.request("/api/v1/%64evices", Method::GET, None)
+            .await
+            .status(),
+        404
+    );
+    assert_eq!(
+        f.request("/api/v1/devices/bad%ZZ/test", Method::POST, Some(json!({})))
+            .await
+            .status(),
+        400
+    );
+    assert_eq!(
+        f.request("/api/v1/devices/%C0%AF/test", Method::POST, Some(json!({})))
+            .await
+            .status(),
+        400
+    );
+    let reader = f
+        .core
+        .auth
+        .create(
+            json!({"name":"route reader","scopes":["devices:read"],"devices":[f.id]}),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.with_token(
+            &format!("/API/V1/DEVICES/{encoded}/StOp/"),
+            Method::POST,
+            Some(json!({})),
+            &reader.token
+        )
+        .await
+        .status(),
+        403
+    );
+    let opened = f.open().await;
+    let sid = opened["structuredContent"]["session"]["session_id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        f.request(&format!("/API/V1/SESSIONS/{sid}/FrAmE/"), Method::GET, None)
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        f.request(&format!("/api/v1/sessions/{sid}/frame"), Method::GET, None)
+            .await
+            .status(),
+        429
+    );
+    assert_eq!(
+        f.request(
+            &format!("/API/V1/DEVICES/{encoded}/StOp/"),
+            Method::POST,
+            Some(json!({}))
+        )
+        .await
+        .status(),
+        200
+    );
+    f.close().await;
+}
+
 #[cfg(feature = "embedded-web")]
 struct NativeCli {
     executable: std::path::PathBuf,
@@ -1318,12 +1408,80 @@ impl NativeCli {
             .env_clear()
             .envs(environment)
             .env("PATH", "")
+            .env_remove("HOME")
+            .env_remove("USERPROFILE")
             .current_dir(self.dir.path())
             .args(args);
         tokio::task::spawn_blocking(move || command.output().unwrap())
             .await
             .unwrap()
     }
+}
+
+#[cfg(feature = "embedded-web")]
+#[tokio::test]
+async fn copied_cli_checks_readiness_and_administers_tls_with_explicit_trust_without_local_storage()
+{
+    let f = Fixture::new().await;
+    let cli = NativeCli::new();
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert = cli.dir.path().join("local-ca.pem");
+    let key = cli.dir.path().join("server-key.pem");
+    std::fs::write(&cert, generated.cert.pem()).unwrap();
+    std::fs::write(&key, generated.signing_key.serialize_pem()).unwrap();
+    let tls = Server::bind(
+        f.core.clone(),
+        Options {
+            port: 0,
+            certificate: Some(cert.clone()),
+            key: Some(key),
+            ..Options::default()
+        },
+        &[],
+    )
+    .await
+    .unwrap();
+    let base = format!("https://localhost:{}", tls.address.port());
+    let no_trust = vec!["healthcheck".into(), "--url".into(), base.clone()];
+    assert!(!cli.run(no_trust.clone()).await.status.success());
+    let mut trusted = no_trust;
+    trusted.extend(["--ca".into(), cert.to_string_lossy().into_owned()]);
+    let healthy = cli.run(trusted.clone()).await;
+    assert!(
+        healthy.status.success(),
+        "{}",
+        String::from_utf8_lossy(&healthy.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&healthy.stdout).unwrap()["ok"],
+        true
+    );
+    let mut wrong_name = trusted.clone();
+    wrong_name[2] = format!("https://127.0.0.1:{}", tls.address.port());
+    assert!(!cli.run(wrong_name).await.status.success());
+    let pat = cli.dir.path().join("owner.pat");
+    std::fs::write(&pat, &f.token).unwrap();
+    let mut doctor = trusted.clone();
+    doctor[0] = "doctor".into();
+    doctor.extend(["--pat-file".into(), pat.to_string_lossy().into_owned()]);
+    let result = cli.run(doctor).await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap()["diagnostics"]["devices"][0]["device_id"],
+        f.id
+    );
+    assert!(!cli.dir.path().join(".kvmhelm").exists());
+    f.store.close().await.unwrap();
+    assert!(
+        !cli.run(trusted).await.status.success(),
+        "a live HTTP listener with a failed store is not ready"
+    );
+    tls.close().await;
+    f.close().await;
 }
 
 #[cfg(feature = "embedded-web")]
