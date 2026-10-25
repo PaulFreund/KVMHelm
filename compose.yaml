@@ -26,7 +26,16 @@ services:
         "https://127.0.0.1:8765",
       ]
     healthcheck:
-      test: ["CMD", "node", "dist/server/healthcheck.js"]
+      test:
+        [
+          "CMD",
+          "/app/kvmhelm",
+          "healthcheck",
+          "--url",
+          "https://localhost:8765",
+          "--ca",
+          "/tls/server.crt",
+        ]
       interval: 30s
       timeout: 5s
     restart: unless-stopped

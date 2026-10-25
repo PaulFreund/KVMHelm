@@ -19,6 +19,8 @@ mod queue;
 pub mod runtime;
 pub mod secrets;
 pub mod server;
+#[cfg(windows)]
+pub mod service;
 mod shared;
 pub mod store;
 pub mod transport;

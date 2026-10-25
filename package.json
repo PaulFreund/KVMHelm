@@ -13,6 +13,8 @@
     "setup": "node scripts/setup.mjs",
     "dev": "tsx server/cli.ts serve --dev",
     "build": "vue-tsc --noEmit && tsc -p tsconfig.server.json && vite build",
+    "build:web": "vue-tsc --noEmit && vite build",
+    "package:native": "node scripts/package-native.mjs",
     "start": "node --env-file-if-exists=.env dist/server/cli.js serve",
     "cli": "tsx server/cli.ts",
     "test": "tsx --test tests/*.test.ts",

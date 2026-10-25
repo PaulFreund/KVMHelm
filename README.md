@@ -2,9 +2,13 @@
 
 Ein lokaler KVM-Daemon für Menschen und Computer-Use-Clients. Der POC unterstützt **PiKVM v4, JetKVM sowie GL.iNet Comet GL-RM1 und GL-RM10** mit Fokus auf **geringe Computer-Use-Latenz**. Weitere Hardware erhält eigene Adapter; PiKVM-Protokollkompatibilität wird nicht vorausgesetzt.
 
-Die laufende [Rust-Portierung](docs/rust-port.md) enthält einen nativen HTTP-/MCP-Daemon und eine CLI mit stdio-Bridge, eingebetteter Vue-Oberfläche, Persistenz, Autorisierung, Computer-Use-Core, geteilten Medien, Simulator und PiKVM-/Comet-/JetKVM-Adaptern einschließlich Audio. Die vorhandenen Plugins erhalten einen optionalen Node-IPC-Adapter. Vollständige API-/UI-Abnahme, native Releasepakete und vergleichende Laufzeitmessungen bleiben offen. Der TypeScript-Daemon bleibt bis zur Gesamtabnahme die vollständige Referenz und wird weiterhin wie unten gestartet. Native Build-/Startbefehle, Funktionszuordnung und Prüfgrenzen stehen im Portierungsdokument.
+Die laufende [Rust-Portierung](docs/rust-port.md) enthält einen nativen HTTP-/MCP-Daemon und eine CLI mit stdio-Bridge, eingebetteter Vue-Oberfläche, Persistenz, Autorisierung, Computer-Use-Core, geteilten Medien, Simulator und PiKVM-/Comet-/JetKVM-Adaptern einschließlich Audio. Die vorhandenen Plugins erhalten einen optionalen Node-IPC-Adapter. [Native Pakete](docs/native-packaging.md) bieten Core-, FFmpeg- und vollständige Helferprofile mit gepinnten Downloads und Notices. Dockerfile und LAN-Launcher starten auf diesem Branch den nativen Daemon. Plattform-/Hardwareabnahme und vergleichende Laufzeitmessungen bleiben offen. Der TypeScript-Daemon bleibt bis zur Gesamtabnahme die Vergleichsreferenz und wird weiterhin wie unten über npm gestartet.
 
 ## Start
+
+Die folgenden npm-Befehle starten die TypeScript-Vergleichsreferenz. Für den
+nativen Daemon mit eingebetteter Oberfläche siehe [Pakete und Migration](docs/native-packaging.md);
+sein Corebetrieb benötigt kein Node/npm.
 
 Windows, macOS und Linux: Voraussetzung sind Git und Node.js **24.18 oder neuer innerhalb Version 24**. Abhängigkeiten sind im Lockfile gepinnt.
 
@@ -39,7 +43,7 @@ node dist/server/cli.js device benchmark DEVICE_ID
 | GL.iNet Comet GL-RM1      | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks          |
 | GL.iNet Comet Pro GL-RM10 | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks          |
 
-JetKVM nutzt natives WebRTC und einen dauerhaften FFmpeg-Prozess für H.264 → JPEG. Das passende FFmpeg-Binary wird bei der Installation automatisch bereitgestellt. Ein eigenes Binary kann über `KVMHELM_FFMPEG` gewählt werden. PiKVM und Comet benötigen keinen Videodecoder. Details: [Gerätetreiber](docs/device-drivers.md).
+JetKVM nutzt natives WebRTC und einen dauerhaften FFmpeg-Prozess für H.264 → JPEG. Die npm-Referenzinstallation liefert den Helfer über `ffmpeg-static`; native Pakete enthalten ihn in den Profilen `media` und `full`. Ein eigenes Binary kann über `KVMHELM_FFMPEG` gewählt werden. PiKVM und Comet benötigen keinen Videodecoder. Details: [Gerätetreiber](docs/device-drivers.md).
 
 ## Oberfläche
 
@@ -127,7 +131,7 @@ node dist/server/cli.js serve --host 192.168.1.10 --cert /tls/server.crt --key /
 
 Zusätzliche tatsächlich verwendete Origins mit `--origin https://hostname:8765` freigeben. Browser-Mikrofone benötigen einen vertrauenswürdigen sicheren Kontext. Kein öffentliches Publishing, Relay oder eingebauter TURN-Server.
 
-`Dockerfile` baut einen Nicht-root-Linux-Container. `compose.yaml` benötigt vorbereitete beschreibbare `runtime/data` und `runtime/secrets` für UID 1000 sowie ein vertrauenswürdiges Zertifikat mit `localhost`-SAN in `runtime/tls/server.crt` und `server.key`. Bootstrap im Container vor Start:
+`Dockerfile` baut einen nativen Nicht-root-Linux-Container mit optionalen FFmpeg-/Node-Helfern; der lokale Containerlauf ist noch nicht abgenommen (siehe [Paketierung](docs/native-packaging.md)). `compose.yaml` benötigt vorbereitete beschreibbare `runtime/data` und `runtime/secrets` für UID 1000 sowie ein vertrauenswürdiges Zertifikat mit `localhost`-SAN in `runtime/tls/server.crt` und `server.key`. Bootstrap im Container vor Start:
 
 ```sh
 docker compose run --rm kvmhelm token bootstrap

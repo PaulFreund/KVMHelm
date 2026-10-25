@@ -291,12 +291,40 @@ fn replay_budget(value: Option<String>) -> Result<usize> {
     }
     Ok(bytes.floor() as usize)
 }
+pub(crate) struct Lifecycle {
+    pub stop: tokio_util::sync::CancellationToken,
+    pub ready: Box<dyn Fn() -> Result<()> + Send + Sync>,
+    pub stopping: Box<dyn Fn() -> Result<()> + Send + Sync>,
+}
 pub async fn run() -> Result<()> {
-    let args = Arguments::parse()?;
+    run_inner(None).await
+}
+#[cfg(windows)]
+pub(crate) async fn run_service(lifecycle: Lifecycle) -> Result<()> {
+    run_inner(Some(lifecycle)).await
+}
+async fn run_inner(lifecycle: Option<Lifecycle>) -> Result<()> {
+    let mut args = Arguments::parse()?;
+    if lifecycle.is_some() {
+        if !args
+            .positions
+            .iter()
+            .take(2)
+            .map(String::as_str)
+            .eq(["service", "run"])
+        {
+            return Err(GatewayError::invalid());
+        }
+        args.positions.splice(..2, ["serve".into()]);
+    }
     let command = args.positions.first().map(String::as_str).unwrap_or("help");
     if command == "help" {
         println!(
             "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  plugin list|install <directory>|enable|disable|restart|uninstall\n  secrets cleanup\n  doctor\n  healthcheck [--url https://localhost:8765 --ca trusted-ca.pem]\nUse --data and --secrets for separate protected storage locations. Remote CLI/MCP TLS trusts --ca or KVMHELM_CA in addition to public roots. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugins optionally require Node (KVMHELM_NODE, beside this executable or PATH). Full API/UI/platform validation, release packaging and performance measurements remain in progress."
+        );
+        #[cfg(windows)]
+        println!(
+            "  service run [serve options] (Windows SCM; registration is an explicit operator step)"
         );
         return Ok(());
     }
@@ -533,10 +561,19 @@ pub async fn run() -> Result<()> {
             } else { None };
             eprintln!("KVMHelm listening on {}", primary.url);
             if let Some(server) = &secondary { eprintln!("KVMHelm LAN listening on {}", server.url); }
-            let signal = shutdown_signal().await;
+            let signal = async {
+                if let Some(lifecycle) = &lifecycle {
+                    (lifecycle.ready)()?;
+                    // SCM processes have no console. Their registered control
+                    // handler owns stop/shutdown; do not install Ctrl+C here.
+                    lifecycle.stop.cancelled().await;
+                    Ok(())
+                } else { shutdown_signal().await }
+            }.await;
+            let stopping = lifecycle.as_ref().map(|l| (l.stopping)()).transpose();
             primary.close().await;
             if let Some(server) = secondary { server.close().await; }
-            signal
+            signal.and(stopping.map(|_| ()))
         }.await;
         core.shutdown().await;
         result

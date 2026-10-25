@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.kvmhelm</string>
+  <key>ProgramArguments</key><array>
+    <string>__PACKAGE_ROOT__/kvmhelm</string><string>serve</string>
+    <string>--data</string><string>__HOME__/.kvmhelm/data</string>
+    <string>--secrets</string><string>__HOME__/.kvmhelm/secrets</string>
+  </array>
+  <key>WorkingDirectory</key><string>__PACKAGE_ROOT__</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>3</integer>
+  <key>ExitTimeOut</key><integer>90</integer>
+  <key>StandardErrorPath</key><string>__HOME__/.kvmhelm/daemon.log</string>
+</dict></plist>

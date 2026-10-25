@@ -1,0 +1,27 @@
+[Unit]
+Description=KVMHelm native daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kvmhelm
+Group=kvmhelm
+WorkingDirectory=/opt/kvmhelm/current
+Environment=KVMHELM_DATA=/var/lib/kvmhelm/data
+Environment=KVMHELM_SECRETS=/var/lib/kvmhelm/secrets
+EnvironmentFile=-/etc/kvmhelm/environment
+ExecStart=/opt/kvmhelm/current/kvmhelm serve
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kvmhelm
+
+[Install]
+WantedBy=multi-user.target

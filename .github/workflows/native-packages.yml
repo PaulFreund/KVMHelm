@@ -1,0 +1,61 @@
+name: Native package verification
+on: [workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  packages:
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: rustup toolchain install 1.99.1 --profile minimal
+      - run: npx playwright install --with-deps chromium
+      - name: Validate launchd template syntax
+        if: runner.os == 'macOS'
+        shell: bash
+        run: plutil -lint packaging/local.kvmhelm.plist
+      - name: Build native release and package all optional helpers
+        run: npm run package:native -- --target ${{ matrix.target }} --profile full
+      - name: Verify deterministic assembly and actual package migration/lifecycle
+        shell: bash
+        run: KVMHELM_TEST_PACKAGE_ARCHIVE="target/packages/kvmhelm-0.1.0-${{ matrix.target }}-full.tar.gz" node scripts/test-native-package.mjs
+      - name: Verify media and core profiles with the same native binary
+        shell: bash
+        run: |
+          node scripts/package-native.mjs --target "${{ matrix.target }}" --profile media --binary "target/${{ matrix.target }}/release/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}"
+          node scripts/package-native.mjs --target "${{ matrix.target }}" --profile core --binary "target/${{ matrix.target }}/release/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}"
+      - name: JetKVM WebRTC using the packaged FFmpeg helper
+        shell: bash
+        run: |
+          mkdir -p target/interop-package
+          tar -xzf "target/packages/kvmhelm-0.1.0-${{ matrix.target }}-full.tar.gz" -C target/interop-package --strip-components=1
+          KVMHELM_TEST_HELPER_DIRECTORY=target/interop-package KVMHELM_TEST_BINARY="target/interop-package/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-jetkvm-interop.mjs
+      - name: Isolated SCM integration on disposable Windows runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path target/scm-package | Out-Null
+          tar -xzf target/packages/kvmhelm-0.1.0-x86_64-pc-windows-msvc-full.tar.gz -C target/scm-package --strip-components=1
+          ./scripts/test-windows-service.ps1 -PackageDirectory target/scm-package
+      # Archives remain in this job's workspace. Publishing or attaching build
+      # artifacts is a separate explicitly requested operator action.

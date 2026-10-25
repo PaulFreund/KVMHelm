@@ -1484,6 +1484,28 @@ async fn copied_cli_checks_readiness_and_administers_tls_with_explicit_trust_wit
     f.close().await;
 }
 
+#[cfg(all(feature = "embedded-web", windows))]
+#[tokio::test]
+async fn service_mode_outside_scm_fails_before_opening_a_core_or_creating_state() {
+    let cli = NativeCli::new();
+    let data = cli.dir.path().join("service-data");
+    let secrets = cli.dir.path().join("service-secrets");
+    let result = cli
+        .run(vec![
+            "service".into(),
+            "run".into(),
+            "--data".into(),
+            data.to_string_lossy().into(),
+            "--secrets".into(),
+            secrets.to_string_lossy().into(),
+        ])
+        .await;
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("start service run through SCM"));
+    assert!(!data.exists());
+    assert!(!secrets.exists());
+}
+
 #[cfg(feature = "embedded-web")]
 #[tokio::test]
 async fn copied_cli_bootstrap_needs_no_node_and_never_overwrites_an_existing_pat() {

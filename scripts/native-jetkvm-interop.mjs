@@ -25,8 +25,11 @@ const env = Object.fromEntries(
   ),
 );
 env.PATH = "";
-env.KVMHELM_FFMPEG = createRequire(import.meta.url)("ffmpeg-static");
-assert.ok(env.KVMHELM_FFMPEG, "Fixture FFmpeg required");
+const helperDirectory = process.env.KVMHELM_TEST_HELPER_DIRECTORY;
+if (!helperDirectory) {
+  env.KVMHELM_FFMPEG = createRequire(import.meta.url)("ffmpeg-static");
+  assert.ok(env.KVMHELM_FFMPEG, "Fixture FFmpeg required");
+}
 const args = ["--data", join(dir, "data"), "--secrets", join(dir, "secrets")];
 const options = { cwd: dir, env, windowsHide: true };
 const lanOnly = process.env.KVMHELM_TEST_ICE_LAN === "1";
@@ -286,6 +289,11 @@ async function notify(method, params) {
 }
 try {
   await copyFile(resolve(process.env.KVMHELM_TEST_BINARY), executable);
+  if (helperDirectory) {
+    const helper = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+    await copyFile(join(resolve(helperDirectory), helper), join(dir, helper));
+    await chmod(join(dir, helper), 0o700);
+  }
   await chmod(executable, 0o700);
   const bootstrap = spawnSync(executable, ["token", "bootstrap", ...args], {
     ...options,
@@ -373,6 +381,13 @@ try {
       "actual WebRTC must use the gathered LAN interface",
     );
   }
+  // Independent RTP tracks need not become observable with the first video
+  // frame. Await actual incoming audio discovery before opening its ticket.
+  await until(
+    async () => (await api("/devices"))[0].capabilities.audio.from_target,
+    "Incoming Opus track discovery",
+    5000,
+  );
   const listed = await api("/devices");
   assert.equal(listed[0].capabilities.keyboard.hid, true);
   assert.equal(listed[0].capabilities.audio.to_target, false);

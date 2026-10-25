@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "asn1-rs-impl@0.2.0": {
+      "gitCommit": "a20e5f7319c896737ad0f2557037817b91ad854f",
+      "files": [
+        {
+          "file": "license-supplements/asn1-rs-impl-0.2.0/LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/rusticata/asn1-rs/a20e5f7319c896737ad0f2557037817b91ad854f/LICENSE-MIT",
+          "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+        },
+        {
+          "file": "license-supplements/asn1-rs-impl-0.2.0/LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/rusticata/asn1-rs/a20e5f7319c896737ad0f2557037817b91ad854f/LICENSE-APACHE",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        }
+      ]
+    },
+    "crc-catalog@2.5.0": {
+      "gitCommit": "ed4ad631f22b05055c21a3a4127eb7cf6d75bb62",
+      "files": [
+        {
+          "file": "license-supplements/crc-catalog-2.5.0/MIT.txt",
+          "url": "https://raw.githubusercontent.com/akhilles/crc-catalog/ed4ad631f22b05055c21a3a4127eb7cf6d75bb62/LICENSES/MIT.txt",
+          "sha256": "5ef8fcfb6cccec8fcae043c834099a60c8b7406408db576e026d2b7e67dc5cf5"
+        },
+        {
+          "file": "license-supplements/crc-catalog-2.5.0/Apache-2.0.txt",
+          "url": "https://raw.githubusercontent.com/akhilles/crc-catalog/ed4ad631f22b05055c21a3a4127eb7cf6d75bb62/LICENSES/Apache-2.0.txt",
+          "sha256": "d3cdb764b98283ee7c3a3cea8d374e2a2957322374378d1f3263f4d512741fc3"
+        }
+      ]
+    },
+    "is@0.11.1": {
+      "gitCommit": "95e5038c6f45de6646d8e3f4c2bca6207a5bedde",
+      "files": [
+        {
+          "file": "license-supplements/is-0.11.1/LICENSE-MIT.txt",
+          "url": "https://raw.githubusercontent.com/algesten/str0m/95e5038c6f45de6646d8e3f4c2bca6207a5bedde/LICENSE-MIT.txt",
+          "sha256": "5b460f37be48ac4cf2181596181cc6cae432fc2caae05944873f380730829a4b"
+        },
+        {
+          "file": "license-supplements/is-0.11.1/LICENSE-APACHE.txt",
+          "url": "https://raw.githubusercontent.com/algesten/str0m/95e5038c6f45de6646d8e3f4c2bca6207a5bedde/src/packet/LICENSE-APACHE.txt",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        }
+      ]
+    },
+    "str0m-aws-lc-rs@0.6.0": {
+      "gitCommit": "9b159720be773693dd561dec0fb20c6d7e4aa323",
+      "files": [
+        {
+          "file": "license-supplements/str0m-aws-lc-rs-0.6.0/LICENSE-MIT.txt",
+          "url": "https://raw.githubusercontent.com/algesten/str0m/9b159720be773693dd561dec0fb20c6d7e4aa323/LICENSE-MIT.txt",
+          "sha256": "5b460f37be48ac4cf2181596181cc6cae432fc2caae05944873f380730829a4b"
+        },
+        {
+          "file": "license-supplements/str0m-aws-lc-rs-0.6.0/LICENSE-APACHE.txt",
+          "url": "https://raw.githubusercontent.com/algesten/str0m/9b159720be773693dd561dec0fb20c6d7e4aa323/src/packet/LICENSE-APACHE.txt",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        }
+      ]
+    },
+    "str0m-proto@0.7.0": {
+      "gitCommit": "9b159720be773693dd561dec0fb20c6d7e4aa323",
+      "files": [
+        {
+          "file": "license-supplements/str0m-proto-0.7.0/LICENSE-MIT.txt",
+          "url": "https://raw.githubusercontent.com/algesten/str0m/9b159720be773693dd561dec0fb20c6d7e4aa323/LICENSE-MIT.txt",
+          "sha256": "5b460f37be48ac4cf2181596181cc6cae432fc2caae05944873f380730829a4b"
+        },
+        {
+          "file": "license-supplements/str0m-proto-0.7.0/LICENSE-APACHE.txt",
+          "url": "https://raw.githubusercontent.com/algesten/str0m/9b159720be773693dd561dec0fb20c6d7e4aa323/src/packet/LICENSE-APACHE.txt",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        }
+      ]
+    }
+  }
+}
