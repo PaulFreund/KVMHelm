@@ -1,0 +1,42 @@
+[package]
+name = "kvmhelm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[lib]
+path = "native/src/lib.rs"
+
+[[test]]
+name = "foundation"
+path = "native/tests/foundation.rs"
+
+[[test]]
+name = "legacy_compat"
+path = "native/tests/legacy_compat.rs"
+
+[dependencies]
+aes-gcm = "=0.10.3"
+base64 = "=0.22.1"
+rand = "=0.8.8"
+rusqlite = { version = "=0.40.2", features = ["bundled", "backup"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.10.9"
+subtle = "=2.6.1"
+tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "sync", "time"] }
+url = "=2.5.8"
+uuid = { version = "=1.28.0", features = ["v4", "serde"] }
+zeroize = "=1.9.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

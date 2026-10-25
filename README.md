@@ -2,6 +2,8 @@
 
 Ein lokaler KVM-Daemon für Menschen und Computer-Use-Clients. Der POC unterstützt **PiKVM v4, JetKVM sowie GL.iNet Comet GL-RM1 und GL-RM10** mit Fokus auf **geringe Computer-Use-Latenz**. Weitere Hardware erhält eigene Adapter; PiKVM-Protokollkompatibilität wird nicht vorausgesetzt.
 
+Die laufende [Rust-Portierung](docs/rust-port.md) enthält erste native Bibliothekskomponenten und Kompatibilitätsprüfungen. Der derzeitige Daemonstart ist unten beschrieben; Funktionszuordnung und offene Integrationsschritte stehen im Portierungsdokument.
+
 ## Start
 
 Windows, macOS und Linux: Voraussetzung sind Git und Node.js **24.18 oder neuer innerhalb Version 24**. Abhängigkeiten sind im Lockfile gepinnt.
