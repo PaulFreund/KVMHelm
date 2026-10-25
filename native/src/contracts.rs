@@ -101,6 +101,17 @@ pub enum Profile {
     Warm,
 }
 
+impl Profile {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Active => "active",
+            Self::Overview => "overview",
+            Self::Warm => "warm",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Layout {
@@ -321,6 +332,19 @@ pub enum Action {
 }
 
 impl Action {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Click { .. } => "click",
+            Self::DoubleClick { .. } => "double_click",
+            Self::Move { .. } => "move",
+            Self::Drag { .. } => "drag",
+            Self::Scroll { .. } => "scroll",
+            Self::Keypress { .. } => "keypress",
+            Self::Type { .. } => "type",
+            Self::Wait { .. } => "wait",
+            Self::Screenshot {} => "screenshot",
+        }
+    }
     pub fn point(&self) -> Option<Point> {
         match *self {
             Self::Click { x, y, .. }
@@ -330,6 +354,58 @@ impl Action {
             _ => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Signal {
+    Present,
+    Absent,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Capabilities {
+    pub video: VideoCapabilities,
+    pub mouse: MouseCapabilities,
+    pub keyboard: KeyboardCapabilities,
+    pub audio: AudioCapabilities,
+    pub timebase: Timebase,
+    pub extensions: serde_json::Map<String, Value>,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct VideoCapabilities {
+    pub snapshot: bool,
+    pub stream: bool,
+    pub formats: Vec<String>,
+    pub signal: Signal,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct MouseCapabilities {
+    pub absolute: bool,
+    pub relative: bool,
+    pub buttons: Vec<String>,
+    pub horizontal_scroll: bool,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KeyboardCapabilities {
+    pub hid: bool,
+    pub layouts: Vec<String>,
+    pub text_method: String,
+    pub characters: String,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AudioCapabilities {
+    pub from_target: bool,
+    pub to_target: bool,
+    pub formats: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Timebase {
+    pub source_timestamp: bool,
+    pub uncertainty_ms: Option<f64>,
 }
 
 impl Validate for Action {

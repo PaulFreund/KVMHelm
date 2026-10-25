@@ -6,6 +6,7 @@ use crate::{
     store::{Kind, Store},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use futures_util::future::BoxFuture;
 use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,6 +19,8 @@ use std::{
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
+
+type RevokeHook = std::sync::Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Token {
@@ -111,6 +114,7 @@ pub struct Auth {
     store: Store,
     state: RwLock<State>,
     writing: Mutex<()>,
+    on_revoke: RwLock<Option<RevokeHook>>,
 }
 
 pub fn now_ms() -> u64 {
@@ -148,7 +152,13 @@ impl Auth {
                 uis: HashMap::new(),
             }),
             writing: Mutex::new(()),
+            on_revoke: RwLock::new(None),
         })
+    }
+
+    pub(crate) fn set_on_revoke(&self, hook: RevokeHook) -> Result<()> {
+        *self.on_revoke.write().map_err(|_| auth_failed())? = Some(hook);
+        Ok(())
     }
 
     pub fn check(
@@ -280,9 +290,15 @@ impl Auth {
             .put(Kind::Tokens, id, value, token.revision)
             .await?;
         let token: Token = serde_json::from_value(stored).map_err(|_| GatewayError::storage())?;
-        let mut state = self.state.write().map_err(|_| auth_failed())?;
-        state.tokens.insert(id.into(), token);
-        state.uis.retain(|_, session| session.token_id != id);
+        {
+            let mut state = self.state.write().map_err(|_| auth_failed())?;
+            state.tokens.insert(id.into(), token);
+            state.uis.retain(|_, session| session.token_id != id);
+        }
+        let hook = self.on_revoke.read().map_err(|_| auth_failed())?.clone();
+        if let Some(hook) = hook {
+            hook(id.to_owned()).await;
+        }
         Ok(())
     }
 

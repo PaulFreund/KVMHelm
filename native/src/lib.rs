@@ -3,11 +3,18 @@
 
 pub mod auth;
 pub mod contracts;
+pub mod core;
+pub mod drivers;
 pub mod error;
 pub mod keyboard;
+pub mod mcp;
+pub mod media;
 pub mod network;
 mod private_fs;
+mod queue;
 pub mod secrets;
+mod shared;
 pub mod store;
 
 pub use error::{GatewayError, Result};
+pub use shared::monotonic_ms;

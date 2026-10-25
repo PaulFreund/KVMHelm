@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Store, Secrets } from "../dist/server/store.js";
 import { Auth, tokenSchema } from "../dist/server/auth.js";
+import { Core } from "../dist/server/core.js";
 import {
   deviceSchema,
   actionSchema,
@@ -353,7 +354,139 @@ function mapping() {
   };
 }
 
-if (command === "prepare" || command === "verify") {
+async function coreTranscript() {
+  assert.ok(dir, "explicit temporary directory required");
+  await mkdir(join(dir, "data"), { recursive: true, mode: 0o700 });
+  const store = new Store(join(dir, "data"));
+  const auth = new Auth(store);
+  await auth.load();
+  const token = await auth.create({
+    name: "core fixture",
+    scopes: [...scopes],
+    devices: ["*"],
+  });
+  const a = auth.authenticate(token.token, "a"),
+    b = auth.authenticate(token.token, "b");
+  const core = new Core(store, await Secrets.open(join(dir, "secrets")), auth);
+  const summary = (r) => ({
+    ok: r.ok,
+    code: r.error?.code ?? null,
+    actions: r.actions ?? [],
+    frames: r.images?.length ?? 0,
+    mode: r.session?.mode ?? null,
+    lease: !!r.lease,
+    closed: r.session_closed ?? false,
+    remaining: r.journal_remaining ?? r.session?.journal_remaining ?? null,
+    input_revision: r.input_revision ?? null,
+    suspended: r.control_suspended ?? null,
+    computers: r.computers?.length ?? null,
+  });
+  const trace = [];
+  const record = (label, r) => {
+    trace.push([label, summary(r)]);
+    return r;
+  };
+  const ref = (r) => {
+    const i = r.images[0].info;
+    return {
+      frame_id: i.frame_id,
+      view_id: i.view_id,
+      input_revision: i.input_revision,
+    };
+  };
+  try {
+    await core.load();
+    const device = await core.saveDevice(a, {
+      name: "Core fixture",
+      driver_id: "simulator",
+      transport: "simulator",
+      minimum_action_latency_ms: 0,
+      tags: ["core"],
+    });
+    record("list", await core.tool(a, "list_computers", { tags: ["core"] }));
+    const opened = record(
+      "open",
+      await core.tool(a, "open_computer", {
+        computer_id: device.device_id,
+        mode: "observe",
+        request_id: "open",
+      }),
+    );
+    const session_id = opened.session.session_id;
+    record(
+      "acquire",
+      await core.tool(a, "computer_control", {
+        session_id,
+        request_id: "acquire",
+        operation: "acquire",
+      }),
+    );
+    const observed = record(
+      "observe",
+      await core.tool(a, "computer_screenshot", { session_id }),
+    );
+    const request = {
+      session_id,
+      request_id: "click",
+      reference: ref(observed),
+      actions: [{ type: "click", x: 10, y: 10 }],
+      observation: { mode: "none" },
+    };
+    record("input", await core.tool(a, "computer", request));
+    record("retry", await core.tool(a, "computer", request));
+    record(
+      "conflict",
+      await core.tool(a, "computer", {
+        ...request,
+        actions: [{ type: "click", x: 11, y: 10 }],
+      }),
+    );
+    record(
+      "stale",
+      await core.tool(a, "computer", { ...request, request_id: "stale" }),
+    );
+    record(
+      "forbidden",
+      await core.tool(b, "computer_screenshot", { session_id }),
+    );
+    record("stop", await core.stopControl(b, device.device_id));
+    record(
+      "blocked",
+      await core.tool(a, "computer_control", {
+        session_id,
+        request_id: "blocked",
+        operation: "acquire",
+      }),
+    );
+    record("resume", await core.stopControl(b, device.device_id, true));
+    record(
+      "reacquire",
+      await core.tool(a, "computer_control", {
+        session_id,
+        request_id: "reacquire",
+        operation: "acquire",
+      }),
+    );
+    record(
+      "release",
+      await core.tool(a, "computer_control", {
+        session_id,
+        request_id: "release",
+        operation: "release",
+      }),
+    );
+    record("close", await core.tool(a, "close_computer", { session_id }));
+    record("lost", await core.tool(a, "computer_screenshot", { session_id }));
+    return { trace, batches: core.metrics.batches };
+  } finally {
+    await core.shutdown();
+    await store.close();
+  }
+}
+
+if (command === "core")
+  process.stdout.write(JSON.stringify(await coreTranscript()));
+else if (command === "prepare" || command === "verify") {
   await storage();
   process.stdout.write("ok");
 } else if (command === "contracts")

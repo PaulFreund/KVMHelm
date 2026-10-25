@@ -3,13 +3,14 @@
 use kvmhelm::{
     auth::{Auth, TokenSpec},
     contracts::{Action, Device, Layout, SCOPES, ToolRequest, Validate},
+    core::{Core, Limits, ToolResult},
     keyboard::{key_name, text_keys, usb_key},
     network::is_local_address,
     secrets::Secrets,
     store::{Kind, Store},
 };
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path, process::Command, sync::Arc};
 
 fn legacy(command: &str, dir: Option<&Path>) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -183,4 +184,173 @@ fn network_policy_matches_reference_boundaries() {
             case["local"].as_bool().unwrap()
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "requires Node 24, npm dependencies and npm run build"]
+async fn native_session_action_replay_and_error_transcripts_match_the_original_core() {
+    fn summary(r: &ToolResult) -> Value {
+        let b = &r.body;
+        json!({"ok":r.success(),"code":b.get("error").and_then(|e|e.get("code")),"actions":b.get("actions").cloned().unwrap_or_else(||json!([])),"frames":r.images.len(),
+            "mode":b.get("session").and_then(|s|s.get("mode")),"lease":b.get("lease").is_some_and(|l|!l.is_null()),"closed":b.get("session_closed").cloned().unwrap_or(false.into()),
+            "remaining":b.get("journal_remaining").or_else(||b.get("session").and_then(|s|s.get("journal_remaining"))),"input_revision":b.get("input_revision"),
+            "suspended":b.get("control_suspended"),"computers":b.get("computers").and_then(Value::as_array).map(Vec::len)})
+    }
+    fn record(trace: &mut Vec<Value>, label: &str, r: &ToolResult) {
+        trace.push(json!([label, summary(r)]));
+    }
+    let original = tempfile::tempdir().unwrap();
+    let expected: Value = serde_json::from_str(&legacy("core", Some(original.path()))).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("data")).await.unwrap();
+    let auth = Arc::new(Auth::load(store.clone()).await.unwrap());
+    let token = auth
+        .create(
+            json!({"name":"core fixture","scopes":SCOPES,"devices":["*"]}),
+            None,
+        )
+        .await
+        .unwrap();
+    let a = auth.authenticate(&token.token, "a").unwrap();
+    let b = auth.authenticate(&token.token, "b").unwrap();
+    let core = Core::new(
+        store.clone(),
+        Secrets::open(dir.path().join("secrets")).await.unwrap(),
+        auth,
+        Limits::default(),
+        120000,
+    )
+    .unwrap();
+    core.load().await.unwrap();
+    let device=core.save_device(&a,json!({"name":"Core fixture","driver_id":"simulator","transport":"simulator","minimum_action_latency_ms":0,"tags":["core"]}),None,None).await.unwrap();
+    let mut trace = Vec::new();
+    record(
+        &mut trace,
+        "list",
+        &core
+            .tool(&a, "list_computers", json!({"tags":["core"]}))
+            .await,
+    );
+    let open = core
+        .tool(
+            &a,
+            "open_computer",
+            json!({"computer_id":device["device_id"],"mode":"observe","request_id":"open"}),
+        )
+        .await;
+    record(&mut trace, "open", &open);
+    let session = open.body["session"]["session_id"].clone();
+    record(
+        &mut trace,
+        "acquire",
+        &core
+            .tool(
+                &a,
+                "computer_control",
+                json!({"session_id":session,"request_id":"acquire","operation":"acquire"}),
+            )
+            .await,
+    );
+    let observed = core
+        .tool(&a, "computer_screenshot", json!({"session_id":session}))
+        .await;
+    record(&mut trace, "observe", &observed);
+    let i = &observed.images[0].info;
+    let request = json!({"session_id":session,"request_id":"click","reference":{"frame_id":i.frame_id,"view_id":i.view_id,"input_revision":i.input_revision},"actions":[{"type":"click","x":10,"y":10}],"observation":{"mode":"none"}});
+    record(
+        &mut trace,
+        "input",
+        &core.tool(&a, "computer", request.clone()).await,
+    );
+    record(
+        &mut trace,
+        "retry",
+        &core.tool(&a, "computer", request.clone()).await,
+    );
+    let mut conflict = request.clone();
+    conflict["actions"][0]["x"] = 11.into();
+    record(
+        &mut trace,
+        "conflict",
+        &core.tool(&a, "computer", conflict).await,
+    );
+    let mut stale = request;
+    stale["request_id"] = "stale".into();
+    record(&mut trace, "stale", &core.tool(&a, "computer", stale).await);
+    record(
+        &mut trace,
+        "forbidden",
+        &core
+            .tool(&b, "computer_screenshot", json!({"session_id":session}))
+            .await,
+    );
+    record(
+        &mut trace,
+        "stop",
+        &ToolResult::ok(
+            core.stop_control(&b, device["device_id"].as_str().unwrap(), false)
+                .await
+                .unwrap(),
+        ),
+    );
+    record(
+        &mut trace,
+        "blocked",
+        &core
+            .tool(
+                &a,
+                "computer_control",
+                json!({"session_id":session,"request_id":"blocked","operation":"acquire"}),
+            )
+            .await,
+    );
+    record(
+        &mut trace,
+        "resume",
+        &ToolResult::ok(
+            core.stop_control(&b, device["device_id"].as_str().unwrap(), true)
+                .await
+                .unwrap(),
+        ),
+    );
+    record(
+        &mut trace,
+        "reacquire",
+        &core
+            .tool(
+                &a,
+                "computer_control",
+                json!({"session_id":session,"request_id":"reacquire","operation":"acquire"}),
+            )
+            .await,
+    );
+    record(
+        &mut trace,
+        "release",
+        &core
+            .tool(
+                &a,
+                "computer_control",
+                json!({"session_id":session,"request_id":"release","operation":"release"}),
+            )
+            .await,
+    );
+    record(
+        &mut trace,
+        "close",
+        &core
+            .tool(&a, "close_computer", json!({"session_id":session}))
+            .await,
+    );
+    record(
+        &mut trace,
+        "lost",
+        &core
+            .tool(&a, "computer_screenshot", json!({"session_id":session}))
+            .await,
+    );
+    let actual = json!({"trace":trace,"batches":core.metrics()["batches"]});
+    core.shutdown().await;
+    store.close().await.unwrap();
+    assert_eq!(actual, expected);
 }
