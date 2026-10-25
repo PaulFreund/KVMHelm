@@ -16,6 +16,7 @@ import { keyName, textKeys } from "../dist/server/drivers/keyboard.js";
 import { usbKey } from "../dist/server/drivers/usb-key.js";
 import { isLocalAddress } from "../dist/server/network.js";
 import { PiKvmDriver } from "../dist/server/drivers/pikvm.js";
+import { H264Assembler } from "../dist/server/drivers/h264.js";
 import { mcpServer } from "../dist/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -609,6 +610,44 @@ if (command === "rate-keys") {
     await client.close();
     await server.close();
   }
+} else if (command === "h264") {
+  const packets = [
+    [65534, 1, true, "6701"],
+    [65535, 2, true, "6802"],
+    [0, 3, true, "6503"],
+    [1, 4, false, "7c850102"],
+    [2, 4, true, "7c450304"],
+    [3, 5, true, "6105"],
+    [3, 5, true, "6105"],
+    [2, 4, true, "7c450304"],
+    [5, 6, false, "7c8506"],
+    [6, 6, true, "7c4507"],
+    [7, 7, true, "6508"],
+    [8, 8, true, "18000465"],
+    [9, 9, true, "7c4509"],
+    [10, 10, true, "180002680a0002670b0002650c"],
+  ];
+  const trace = [];
+  let emitted = [],
+    lost = 0;
+  const assembler = new H264Assembler(
+    (data, keyframe) => emitted.push({ hex: data.toString("hex"), keyframe }),
+    () => lost++,
+  );
+  for (const [sequenceNumber, timestamp, marker, hex] of packets) {
+    assembler.push({
+      header: { sequenceNumber, timestamp, marker },
+      payload: Buffer.from(hex, "hex"),
+    });
+    trace.push({
+      packet: [sequenceNumber, timestamp, marker, hex],
+      emitted,
+      lost,
+    });
+    emitted = [];
+    lost = 0;
+  }
+  process.stdout.write(JSON.stringify(trace));
 } else if (command === "hid")
   process.stdout.write(JSON.stringify(await hidTranscript()));
 else if (command === "core")

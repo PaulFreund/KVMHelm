@@ -404,6 +404,15 @@ impl LanTransport {
         })
     }
     pub async fn websocket(&self, path: &str, cancellation: &CancellationToken) -> Result<Socket> {
+        self.websocket_headers(path, HeaderMap::new(), cancellation)
+            .await
+    }
+    pub async fn websocket_headers(
+        &self,
+        path: &str,
+        headers: HeaderMap,
+        cancellation: &CancellationToken,
+    ) -> Result<Socket> {
         let mut url = self.url(path)?;
         let hostname = url.host_str().unwrap().trim_matches(['[', ']']).to_owned();
         let port = url.port_or_known_default().unwrap();
@@ -426,6 +435,7 @@ impl LanTransport {
                 .into_client_request()
                 .map_err(|_| GatewayError::new("INVALID_ADDRESS"))?;
             request.headers_mut().extend(self.headers.clone());
+            request.headers_mut().extend(headers);
             let config = WebSocketConfig::default()
                 .read_buffer_size(4096)
                 .write_buffer_size(0)

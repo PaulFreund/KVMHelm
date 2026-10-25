@@ -19,6 +19,10 @@ pub struct Hid {
     buttons: Mutex<BTreeSet<String>>,
 }
 impl Hid {
+    pub fn clear(&self) {
+        self.keys.lock().unwrap().clear();
+        self.buttons.lock().unwrap().clear();
+    }
     pub fn has_pressed(&self) -> bool {
         !self.keys.lock().unwrap().is_empty() || !self.buttons.lock().unwrap().is_empty()
     }

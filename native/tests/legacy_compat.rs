@@ -25,6 +25,37 @@ struct TraceSink(Mutex<Vec<Value>>);
 
 #[test]
 #[ignore = "requires Node 24, npm dependencies and npm run build"]
+fn h264_reassembly_matches_original_loss_wrap_parameters_and_fragments() {
+    use kvmhelm::drivers::h264::H264Assembler;
+    let cases: Vec<Value> = serde_json::from_str(&legacy("h264", None)).unwrap();
+    let mut assembler = H264Assembler::default();
+    for case in cases {
+        let p = &case["packet"];
+        let hex = p[3].as_str().unwrap();
+        let bytes = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect::<Vec<_>>();
+        let output = assembler.push(
+            p[0].as_u64().unwrap() as u16,
+            p[1].as_u64().unwrap() as u32,
+            p[2].as_bool().unwrap(),
+            &bytes,
+        );
+        let emitted = output.unit.map(|unit|json!({"hex":unit.data.iter().map(|b|format!("{b:02x}")).collect::<String>(),"keyframe":unit.keyframe})).into_iter().collect::<Vec<_>>();
+        assert_eq!(json!(emitted), case["emitted"], "packet {p}");
+        // The reference can report the same damaged AU both at the gap and at
+        // its marker. Native Assembly reports loss once per push as well.
+        assert_eq!(
+            output.lost,
+            case["lost"].as_u64().unwrap() > 0,
+            "packet {p}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node 24, npm dependencies and npm run build"]
 fn advertised_mcp_contract_matches_the_original_sdk_registration() {
     let expected: Value = serde_json::from_str(&legacy("mcp-contract", None)).unwrap();
     assert_eq!(kvmhelm::mcp::contract(), &expected);

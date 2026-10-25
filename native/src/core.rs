@@ -7,6 +7,7 @@ use crate::{
     },
     drivers::{
         ActionContext, DriverEvent, KvmDriver,
+        jetkvm::JetKvmDriver,
         pikvm::{CometDriver, PiKvmDriver},
         simulator::Simulator,
     },
@@ -394,6 +395,10 @@ impl Core {
         core.register_factory(
             "glinet-comet",
             Arc::new(|device, secret, ca| Ok(Arc::new(CometDriver::new(device, secret, ca)?))),
+        );
+        core.register_factory(
+            "jetkvm",
+            Arc::new(|device, secret, ca| Ok(Arc::new(JetKvmDriver::new(device, secret, ca)?))),
         );
         let weak = Arc::downgrade(&core);
         core.auth.set_on_revoke(Arc::new(move |id| {

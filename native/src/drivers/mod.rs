@@ -1,4 +1,7 @@
 pub mod frames;
+pub mod h264;
+mod jet_peer;
+pub mod jetkvm;
 pub mod network_hid;
 pub mod pikvm;
 pub mod simulator;
