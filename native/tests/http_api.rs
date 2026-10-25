@@ -125,6 +125,575 @@ async fn until(condition: impl Fn() -> bool) {
     .await
     .unwrap();
 }
+
+async fn mcp_request(
+    f: &Fixture,
+    token: &str,
+    session: Option<&str>,
+    method: Method,
+    message: Value,
+) -> (u16, Option<String>, Value) {
+    let mut request = f
+        .http
+        .request(method, format!("{}/mcp", f.base))
+        .bearer_auth(token)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream");
+    if let Some(id) = session {
+        request = request
+            .header("mcp-session-id", id)
+            .header("mcp-protocol-version", "2025-11-25");
+    }
+    let response = request.body(message.to_string()).send().await.unwrap();
+    let status = response.status().as_u16();
+    let session = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|id| id.to_str().ok())
+        .map(String::from);
+    let text = response.text().await.unwrap();
+    let value = if text.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_str(&text).unwrap_or_else(|_| {
+            text.lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .find_map(|data| serde_json::from_str::<Value>(data).ok())
+                .unwrap_or_else(|| json!({"text":text}))
+        })
+    };
+    (status, session, value)
+}
+fn initialize() -> Value {
+    json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"native fixture","version":"1"}}})
+}
+async fn mcp_open(f: &Fixture, token: &str) -> String {
+    let (status, id, response) = mcp_request(f, token, None, Method::POST, initialize()).await;
+    assert_eq!(status, 200, "{response}");
+    assert_eq!(
+        response["result"]["instructions"],
+        kvmhelm::mcp::contract()["instructions"]
+    );
+    let id = id.unwrap();
+    assert_eq!(
+        mcp_request(
+            f,
+            token,
+            Some(&id),
+            Method::POST,
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+        )
+        .await
+        .0,
+        202
+    );
+    id
+}
+async fn mcp_tool(f: &Fixture, id: &str, name: &str, arguments: Value) -> Value {
+    let (status, _, response) = mcp_request(f, &f.token, Some(id), Method::POST,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}})).await;
+    assert_eq!(status, 200, "{response}");
+    response["result"].clone()
+}
+
+#[tokio::test]
+async fn mcp_http_preserves_metadata_images_client_isolation_and_idempotent_input() {
+    let f = Fixture::new().await;
+    let id = mcp_open(&f, &f.token).await;
+    let (_, _, tools) = mcp_request(
+        &f,
+        &f.token,
+        Some(&id),
+        Method::POST,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
+    assert_eq!(tools["result"]["tools"], kvmhelm::mcp::contract()["tools"]);
+    for arguments in [Value::Null, json!([])] {
+        let response = mcp_request(&f,&f.token,Some(&id),Method::POST,json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_computers","arguments":arguments}})).await;
+        assert_eq!(response.2["error"]["code"], -32602);
+    }
+    for arguments in [
+        json!({"computer_id":f.id}),
+        json!({"computer_id":f.id,"mode":"bogus"}),
+    ] {
+        let response = mcp_request(&f,&f.token,Some(&id),Method::POST,json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"open_computer","arguments":arguments}})).await;
+        assert_eq!(response.2["error"]["code"], -32602);
+    }
+    let task = mcp_request(&f,&f.token,Some(&id),Method::POST,json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"open_computer","arguments":{"computer_id":f.id,"mode":"control","request_id":"task"},"task":{}}})).await;
+    assert_eq!(task.2["error"]["code"], -32603);
+    assert!(f.core.get(&f.id).unwrap().lease().is_none());
+    for method in [
+        "resources/list",
+        "prompts/list",
+        "tasks/list",
+        "completion/complete",
+    ] {
+        assert_eq!(
+            mcp_request(
+                &f,
+                &f.token,
+                Some(&id),
+                Method::POST,
+                json!({"jsonrpc":"2.0","id":3,"method":method,"params":{}})
+            )
+            .await
+            .2["error"]["code"],
+            -32601
+        );
+    }
+    let numeric = mcp_request(
+        &f,
+        &f.token,
+        Some(&id),
+        Method::POST,
+        json!({"jsonrpc":"2.0","id":1.0,"method":"ping"}),
+    )
+    .await;
+    assert_eq!(numeric.2["id"].as_f64(), Some(1.0));
+    let opened = mcp_tool(
+        &f,
+        &id,
+        "open_computer",
+        json!({"computer_id":f.id,"mode":"control","request_id":"open"}),
+    )
+    .await;
+    assert_eq!(opened["isError"], false, "{opened}");
+    assert_eq!(opened["content"][1]["type"], "image");
+    assert_eq!(
+        opened["content"][1]["annotations"]["audience"],
+        json!(["user", "assistant"])
+    );
+    assert_eq!(
+        opened["content"][1]["annotations"]["priority"].as_f64(),
+        Some(1.0)
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(opened["content"][0]["text"].as_str().unwrap()).unwrap(),
+        opened["structuredContent"]
+    );
+    let sid = opened["structuredContent"]["session"]["session_id"]
+        .as_str()
+        .unwrap();
+    let frame = &opened["structuredContent"]["frames"][0];
+    let input = json!({"session_id":sid,"request_id":"click","reference":{"frame_id":frame["frame_id"],"view_id":frame["view_id"],"input_revision":frame["input_revision"]},"actions":[{"type":"click","x":10,"y":10}],"observation":{"mode":"none"}});
+    let first = mcp_tool(&f, &id, "computer", input.clone()).await;
+    assert_eq!(first["isError"], false);
+    assert_eq!(first, mcp_tool(&f, &id, "computer", input).await);
+    assert_eq!(
+        f.open().await["structuredContent"]["error"]["code"],
+        "CONTROL_BUSY"
+    );
+    let foreign = f
+        .tool("computer_screenshot", json!({"session_id":sid}))
+        .await;
+    assert!(foreign["isError"].as_bool().unwrap());
+    assert_eq!(
+        mcp_request(&f, &f.token, Some(&id), Method::POST, initialize())
+            .await
+            .2["error"]["code"],
+        -32600
+    );
+    assert_eq!(
+        mcp_tool(&f, &id, "close_computer", json!({"session_id":sid})).await["isError"],
+        false
+    );
+    assert_eq!(
+        mcp_request(&f, &f.token, Some(&id), Method::DELETE, json!({}))
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        mcp_request(
+            &f,
+            &f.token,
+            Some(&id),
+            Method::POST,
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/list"})
+        )
+        .await
+        .0,
+        404
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn mcp_sessions_are_token_bound_and_initialization_reservations_obey_both_limits() {
+    let f = Fixture::limited(Options {
+        port: 0,
+        mcp_sessions: 2,
+        mcp_sessions_per_token: 1,
+        ..Options::default()
+    })
+    .await;
+    // A rejected handshake must not retain an initialization reservation.
+    let bad = f
+        .http
+        .post(format!("{}/mcp", f.base))
+        .bearer_auth(&f.token)
+        .header("accept", "application/json")
+        .json(&initialize())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 406);
+    let (a, b) = tokio::join!(
+        mcp_request(&f, &f.token, None, Method::POST, initialize()),
+        mcp_request(&f, &f.token, None, Method::POST, initialize())
+    );
+    assert_eq!([a.0, b.0].iter().filter(|s| **s == 200).count(), 1);
+    let id = if a.0 == 200 {
+        a.1.unwrap()
+    } else {
+        b.1.unwrap()
+    };
+    let other = f
+        .core
+        .auth
+        .create(
+            json!({"name":"other","scopes":SCOPES,"devices":["*"]}),
+            None,
+        )
+        .await
+        .unwrap();
+    let third = f
+        .core
+        .auth
+        .create(
+            json!({"name":"third","scopes":SCOPES,"devices":["*"]}),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        mcp_request(
+            &f,
+            &other.token,
+            Some(&id),
+            Method::POST,
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+        )
+        .await
+        .0,
+        403
+    );
+    assert_eq!(
+        mcp_request(&f, &other.token, Some(&id), Method::DELETE, json!({}))
+            .await
+            .0,
+        403
+    );
+    let other_id = mcp_open(&f, &other.token).await;
+    assert_eq!(
+        mcp_request(&f, &third.token, None, Method::POST, initialize())
+            .await
+            .2["error"]["code"],
+        "RESOURCE_LIMIT"
+    );
+    assert_eq!(
+        mcp_request(&f, &f.token, Some(&id), Method::DELETE, json!({}))
+            .await
+            .0,
+        200
+    );
+    let third_id = mcp_open(&f, &third.token).await;
+    for (id, token) in [(&other_id, &other.token), (&third_id, &third.token)] {
+        assert_eq!(
+            mcp_request(&f, token, Some(id), Method::DELETE, json!({}))
+                .await
+                .0,
+            200
+        );
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+async fn mcp_negotiates_all_reference_versions_including_the_oldest_legacy_header() {
+    let f = Fixture::new().await;
+    for version in kvmhelm::mcp::contract()["versions"].as_array().unwrap() {
+        let mut request = initialize();
+        request["params"]["protocolVersion"] = version.clone();
+        let (status, id, reply) = mcp_request(&f, &f.token, None, Method::POST, request).await;
+        assert_eq!(status, 200, "{reply}");
+        assert_eq!(reply["result"]["protocolVersion"], *version);
+        assert_eq!(
+            reply["result"]["capabilities"],
+            kvmhelm::mcp::contract()["capabilities"]
+        );
+        let id = id.unwrap();
+        let ping = f
+            .http
+            .post(format!("{}/mcp", f.base))
+            .bearer_auth(&f.token)
+            .header("mcp-session-id", &id)
+            .header("mcp-protocol-version", version.as_str().unwrap())
+            .header("accept", "application/json, text/event-stream")
+            .json(&json!({"jsonrpc":"2.0","id":2,"method":"ping"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(ping.status(), 200, "{}", version);
+        assert!(ping.text().await.unwrap().contains("\"result\":{}"));
+        assert_eq!(
+            mcp_request(&f, &f.token, Some(&id), Method::DELETE, json!({}))
+                .await
+                .0,
+            200
+        );
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+async fn mcp_idle_expiry_closes_control_and_the_live_get_stream() {
+    let f = Fixture::limited(Options {
+        port: 0,
+        mcp_sessions: 1,
+        mcp_idle_timeout: Duration::from_secs(2),
+        ..Options::default()
+    })
+    .await;
+    let id = mcp_open(&f, &f.token).await;
+    let opened = mcp_tool(
+        &f,
+        &id,
+        "open_computer",
+        json!({"computer_id":f.id,"mode":"control","request_id":"open"}),
+    )
+    .await;
+    assert_eq!(opened["isError"], false);
+    assert!(f.core.get(&f.id).unwrap().lease().is_some());
+    let mut stream = f
+        .http
+        .get(format!("{}/mcp", f.base))
+        .bearer_auth(&f.token)
+        .header("mcp-session-id", &id)
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), 200);
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while let Ok(Some(_)) = stream.chunk().await {}
+    })
+    .await
+    .unwrap();
+    until(|| f.core.get(&f.id).unwrap().lease().is_none()).await;
+    assert_eq!(
+        mcp_request(
+            &f,
+            &f.token,
+            Some(&id),
+            Method::POST,
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/list"})
+        )
+        .await
+        .0,
+        404
+    );
+    let replacement = mcp_open(&f, &f.token).await;
+    assert_ne!(replacement, id);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn mcp_delete_remains_usable_after_the_regular_control_window_is_exhausted() {
+    let f = Fixture::limited(Options {
+        port: 0,
+        control_per_minute: 3,
+        ..Options::default()
+    })
+    .await;
+    let id = mcp_open(&f, &f.token).await;
+    assert_eq!(
+        mcp_tool(
+            &f,
+            &id,
+            "open_computer",
+            json!({"computer_id":f.id,"mode":"control","request_id":"open"})
+        )
+        .await["isError"],
+        false
+    );
+    assert_eq!(
+        mcp_request(
+            &f,
+            &f.token,
+            Some(&id),
+            Method::POST,
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/list"})
+        )
+        .await
+        .0,
+        429
+    );
+    assert_eq!(
+        mcp_request(&f, &f.token, Some(&id), Method::DELETE, json!({}))
+            .await
+            .0,
+        200
+    );
+    until(|| f.core.get(&f.id).unwrap().lease().is_none()).await;
+    f.close().await;
+}
+
+#[tokio::test]
+async fn accepted_mcp_input_survives_a_lost_socket_and_duplicate_rpc_ids_cannot_replace_it() {
+    let f = Fixture::new().await;
+    let id = mcp_open(&f, &f.token).await;
+    let opened = mcp_tool(
+        &f,
+        &id,
+        "open_computer",
+        json!({"computer_id":f.id,"mode":"control","request_id":"open"}),
+    )
+    .await;
+    let frame = &opened["structuredContent"]["frames"][0];
+    let sid = &opened["structuredContent"]["session"]["session_id"];
+    let input = json!({"session_id":sid,"request_id":"wait-and-click","reference":{"frame_id":frame["frame_id"],"view_id":frame["view_id"],"input_revision":frame["input_revision"]},"actions":[{"type":"wait","duration_ms":1500},{"type":"click","x":10,"y":10}],"observation":{"mode":"none"}});
+    let body = json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"computer","arguments":input}}).to_string();
+    let mut socket = tokio::net::TcpStream::connect(f.server.as_ref().unwrap().address)
+        .await
+        .unwrap();
+    socket.write_all(format!("POST /mcp HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nMcp-Session-Id: {}\r\nMcp-Protocol-Version: 2025-11-25\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",f.server.as_ref().unwrap().address,f.token,id,body.len(),body).as_bytes()).await.unwrap();
+    until(|| f.core.get(&f.id).unwrap().pending() > 0).await;
+    drop(socket);
+    let duplicate = mcp_request(
+        &f,
+        &f.token,
+        Some(&id),
+        Method::POST,
+        json!({"jsonrpc":"2.0","id":7,"method":"ping"}),
+    )
+    .await;
+    assert_eq!(duplicate.2["error"]["code"], -32600);
+    until(|| f.core.get(&f.id).unwrap().pending() == 0).await;
+    let result = mcp_tool(&f, &id, "computer", input.clone()).await;
+    assert_eq!(result["isError"], false);
+    assert_eq!(result["structuredContent"]["actions"][1]["status"], "sent");
+    assert_eq!(result, mcp_tool(&f, &id, "computer", input).await);
+    let observed = mcp_tool(
+        &f,
+        &id,
+        "computer_screenshot",
+        json!({"session_id":sid,"max_age_ms":0,"timeout_ms":3000}),
+    )
+    .await;
+    assert_eq!(
+        observed["structuredContent"]["frames"][0]["input_revision"]
+            .as_u64()
+            .unwrap(),
+        frame["input_revision"].as_u64().unwrap() + 1
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn token_revocation_closes_mcp_get_and_returns_the_session_reservation() {
+    let f = Fixture::limited(Options {
+        port: 0,
+        mcp_sessions: 1,
+        ..Options::default()
+    })
+    .await;
+    let other = f
+        .core
+        .auth
+        .create(
+            json!({"name":"replacement","scopes":SCOPES,"devices":["*"]}),
+            None,
+        )
+        .await
+        .unwrap();
+    let owner = f.core.auth.authenticate(&f.token, "fixture").unwrap();
+    let id = mcp_open(&f, &f.token).await;
+    assert_eq!(
+        mcp_tool(
+            &f,
+            &id,
+            "open_computer",
+            json!({"computer_id":f.id,"mode":"control","request_id":"open"})
+        )
+        .await["isError"],
+        false
+    );
+    let mut stream = f
+        .http
+        .get(format!("{}/mcp", f.base))
+        .bearer_auth(&f.token)
+        .header("mcp-session-id", &id)
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), 200);
+    f.core.auth.revoke(&owner.token_id).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while let Ok(Some(_)) = stream.chunk().await {}
+    })
+    .await
+    .unwrap();
+    until(|| f.core.get(&f.id).unwrap().lease().is_none()).await;
+    let next = mcp_open(&f, &other.token).await;
+    assert_ne!(id, next);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn listener_shutdown_closes_mcp_clients_without_starting_or_replacing_the_core() {
+    let mut f = Fixture::new().await;
+    let id = mcp_open(&f, &f.token).await;
+    assert_eq!(
+        mcp_tool(
+            &f,
+            &id,
+            "open_computer",
+            json!({"computer_id":f.id,"mode":"control","request_id":"open"})
+        )
+        .await["isError"],
+        false
+    );
+    let server = f.server.take().unwrap();
+    let port = server.address.port();
+    server.close().await;
+    assert!(f.core.get(&f.id).unwrap().lease().is_none());
+    f.server = Some(
+        Server::bind(
+            f.core.clone(),
+            Options {
+                port,
+                ..Options::default()
+            },
+            &[],
+        )
+        .await
+        .unwrap(),
+    );
+    assert_eq!(
+        mcp_request(
+            &f,
+            &f.token,
+            Some(&id),
+            Method::POST,
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+        )
+        .await
+        .0,
+        404
+    );
+    let new_id = mcp_open(&f, &f.token).await;
+    assert_ne!(id, new_id);
+    assert_eq!(
+        mcp_tool(&f, &new_id, "list_computers", json!({})).await["isError"],
+        false
+    );
+    f.close().await;
+}
 #[tokio::test]
 async fn native_http_tools_share_sessions_images_and_idempotent_input() {
     let f = Fixture::new().await;

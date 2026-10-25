@@ -22,6 +22,24 @@ use std::{
 };
 
 struct TraceSink(Mutex<Vec<Value>>);
+
+#[test]
+#[ignore = "requires Node 24, npm dependencies and npm run build"]
+fn advertised_mcp_contract_matches_the_original_sdk_registration() {
+    let expected: Value = serde_json::from_str(&legacy("mcp-contract", None)).unwrap();
+    assert_eq!(kvmhelm::mcp::contract(), &expected);
+}
+#[test]
+#[ignore = "requires Node 24, npm dependencies and npm run build"]
+fn auth_rate_keys_match_the_original_ipv6_subnet_and_mapped_ipv4_policy() {
+    let cases: Vec<Value> = serde_json::from_str(&legacy("rate-keys", None)).unwrap();
+    for case in cases {
+        assert_eq!(
+            kvmhelm::server::rate_limit_key(case["value"].as_str().unwrap().parse().unwrap()),
+            case["key"]
+        );
+    }
+}
 #[async_trait::async_trait]
 impl HidTransport for TraceSink {
     async fn event(

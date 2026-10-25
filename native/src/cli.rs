@@ -14,7 +14,7 @@ use reqwest::Method;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -121,16 +121,12 @@ impl Client {
         {
             return Err(GatewayError::new("INVALID_ADDRESS"));
         }
-        let pat = if let Ok(pat) = std::env::var("KVMHELM_PAT") {
-            pat
-        } else {
-            std::fs::read_to_string(
-                args.value("pat-file")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| secrets.join("cli.pat")),
-            )
-            .map_err(|_| GatewayError::message("AUTH_FAILED", "Cannot read protected PAT file"))?
-        };
+        let pat = crate::mcp_bridge::read_pat(
+            &args
+                .value("pat-file")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| secrets.join("cli.pat")),
+        )?;
         let http = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -139,11 +135,7 @@ impl Client {
             .timeout(Duration::from_secs(40))
             .build()
             .map_err(|_| GatewayError::new("INTERNAL_ERROR"))?;
-        Ok(Self {
-            http,
-            url,
-            pat: zeroize::Zeroizing::new(pat.trim().to_owned()),
-        })
+        Ok(Self { http, url, pat })
     }
     async fn request(&self, path: &str, method: Method, body: Option<Value>) -> Result<Value> {
         let url = self
@@ -196,7 +188,9 @@ impl Client {
     }
 }
 fn json_file(path: &str) -> Result<Value> {
-    let bytes = std::fs::read(path)
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(256 * 1024 + 1).read_to_end(&mut bytes))
         .map_err(|_| GatewayError::message("INVALID_ARGUMENT", "Cannot read configuration file"))?;
     if bytes.len() > 256 * 1024 {
         return Err(GatewayError::new("RESOURCE_LIMIT"));
@@ -250,7 +244,7 @@ pub async fn run() -> Result<()> {
     let command = args.positions.first().map(String::as_str).unwrap_or("help");
     if command == "help" {
         println!(
-            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  device list|add --file config.json|test|benchmark|stop|resume\n  secrets cleanup\n  doctor\nUse --data and --secrets for separate protected storage locations. MCP, audio, JetKVM and plugin runtime integration are still in progress; use the documented TypeScript daemon for the complete feature set."
+            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  secrets cleanup\n  doctor\nUse --data and --secrets for separate protected storage locations. Audio, JetKVM and plugin runtime integration are still in progress; use the documented TypeScript daemon for the complete feature set."
         );
         return Ok(());
     }
@@ -266,6 +260,23 @@ pub async fn run() -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".kvmhelm/secrets"));
     let sub = args.positions.get(1).map(String::as_str).unwrap_or("");
+    if command == "mcp" {
+        if args
+            .value("transport")
+            .is_some_and(|transport| transport != "stdio")
+        {
+            return Err(GatewayError::message(
+                "INVALID_ARGUMENT",
+                "Use --transport stdio",
+            ));
+        }
+        let client = Client::new(&args, &secrets)?;
+        let pat_file = args
+            .value("pat-file")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| secrets.join("cli.pat"));
+        return crate::mcp_bridge::run(client.http, client.url, pat_file).await;
+    }
     if command == "doctor" || command == "device" || command == "token" && sub != "bootstrap" {
         let client = Client::new(&args, &secrets)?;
         let value = match (command, sub) {
@@ -427,7 +438,7 @@ pub async fn run() -> Result<()> {
     let closed = store.close().await;
     work.and(closed)
 }
-async fn shutdown_signal() -> Result<()> {
+pub(crate) async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {
         let mut terminate =

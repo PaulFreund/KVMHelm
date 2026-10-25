@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     convert::Infallible,
-    net::SocketAddr,
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -40,6 +40,22 @@ pub type Body = UnsyncBoxBody<Bytes, BoxError>;
 pub type Assets = &'static [(&'static str, &'static [u8])];
 const BODY_LIMIT: usize = 256 * 1024;
 
+/// Match the existing express-rate-limit default: individual IPv4 addresses,
+/// including IPv4-mapped peers, and a shared /56 window for native IPv6 peers.
+pub fn rate_limit_key(address: IpAddr) -> String {
+    match address {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => {
+            if let Some(address) = address.to_ipv4_mapped() {
+                return address.to_string();
+            }
+            let mut octets = address.octets();
+            octets[7..].fill(0);
+            format!("{}/56", Ipv6Addr::from(octets))
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Options {
     pub host: String,
@@ -50,6 +66,9 @@ pub struct Options {
     pub dev: bool,
     pub media_per_minute: u32,
     pub control_per_minute: u32,
+    pub mcp_sessions: usize,
+    pub mcp_sessions_per_token: usize,
+    pub mcp_idle_timeout: Duration,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -62,6 +81,9 @@ impl Default for Options {
             dev: false,
             media_per_minute: 12000,
             control_per_minute: 2400,
+            mcp_sessions: 128,
+            mcp_sessions_per_token: 32,
+            mcp_idle_timeout: Duration::from_secs(3600),
         }
     }
 }
@@ -99,6 +121,7 @@ pub struct Connection {
 }
 struct State {
     core: Arc<Core>,
+    mcp: crate::mcp_http::Endpoint,
     options: Options,
     origins: HashSet<String>,
     authorities: HashSet<String>,
@@ -197,8 +220,16 @@ impl Server {
             }
             authorities.insert(url[url::Position::BeforeHost..url::Position::AfterPort].to_owned());
         }
+        let mcp = crate::mcp_http::Endpoint::new(
+            core.clone(),
+            authorities.iter().cloned().collect(),
+            origins.iter().cloned().collect(),
+            (options.mcp_sessions, options.mcp_sessions_per_token),
+            options.mcp_idle_timeout,
+        );
         let state = Arc::new(State {
             core,
+            mcp,
             options,
             origins,
             authorities,
@@ -211,6 +242,15 @@ impl Server {
             token_streams: Mutex::new(HashMap::new()),
             tasks: TaskTracker::new(),
             cancel: CancellationToken::new(),
+        });
+        let endpoint = state.mcp.clone();
+        let endpoint_stop = state.cancel.clone();
+        state.tasks.spawn(async move {
+            loop {
+                tokio::select! {biased;_=endpoint_stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(1))=>()};
+                endpoint.sweep().await;
+            }
+            endpoint.close().await;
         });
         let app = state.clone();
         let worker = tokio::spawn(async move {
@@ -302,6 +342,7 @@ fn error_response(error: GatewayError) -> Response<Body> {
         "SESSION_LOST" => 410,
         "STORAGE_ERROR" => 503,
         "INTERNAL_ERROR" => 500,
+        "MCP_CONNECTION_LOST" => 502,
         "REVISION_CONFLICT" => 409,
         "BODY_LIMIT" => 413,
         "RATE_LIMIT" => 429,
@@ -323,7 +364,7 @@ fn rate_response(seconds: u64) -> Response<Body> {
     );
     response
 }
-fn header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>> {
+pub(crate) fn header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>> {
     let mut values = headers.get_all(name).iter();
     let Some(value) = values.next() else {
         return Ok(None);
@@ -385,6 +426,9 @@ fn authorize(
     Ok((identity, Some(csrf)))
 }
 fn safety(path: &str, method: &Method, body: &Value) -> bool {
+    if path == "/mcp" && *method == Method::DELETE {
+        return true;
+    }
     if *method != Method::POST {
         return false;
     }
@@ -479,7 +523,11 @@ async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<
         return static_asset(&state, &path, &parts.method);
     }
     let login = path == "/api/v1/login" && parts.method == Method::POST;
-    if login && let Err(seconds) = state.budgets.take("login", &peer.peer.ip().to_string(), 10) {
+    if login
+        && let Err(seconds) = state
+            .budgets
+            .take("login", &rate_limit_key(peer.peer.ip()), 10)
+    {
         return Ok(rate_response(seconds));
     }
     let auth = if login {
@@ -489,7 +537,10 @@ async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<
             Ok(auth) => Some(auth),
             Err(error) => {
                 return Ok(
-                    match state.budgets.take("auth", &peer.peer.ip().to_string(), 120) {
+                    match state
+                        .budgets
+                        .take("auth", &rate_limit_key(peer.peer.ip()), 120)
+                    {
                         Ok(()) => error_response(error),
                         Err(seconds) => rate_response(seconds),
                     },
@@ -530,12 +581,40 @@ async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<
         return Err(GatewayError::new("DEVICE_OFFLINE"));
     }
     let app = state.clone();
+    let long_stream = parts.method == Method::GET
+        && (path == "/mcp" || path == "/api/v1/events" || path.ends_with("/video"));
     let task = state.tasks.spawn(async move {
-        let _slot = slot;
-        dispatch(app, parts, body, auth, peer).await
+        let response = dispatch(app, parts, body, auth, peer).await?;
+        if long_stream {
+            return Ok(response);
+        }
+        // Keep admission through the last buffered output byte. Hyper can own
+        // a data frame after dropping its Body, so the bytes share the permit.
+        Ok(response.map(|body| admitted_body(body, slot)))
     });
     task.await
         .map_err(|_| GatewayError::new("INTERNAL_ERROR"))?
+}
+struct AdmittedBytes {
+    data: Bytes,
+    _slot: Arc<OwnedSemaphorePermit>,
+}
+fn admitted_body(body: Body, slot: OwnedSemaphorePermit) -> Body {
+    let slot = Arc::new(slot);
+    body.map_frame(move |frame| {
+        frame.map_data(|data| {
+            Bytes::from_owner(AdmittedBytes {
+                data,
+                _slot: slot.clone(),
+            })
+        })
+    })
+    .boxed_unsync()
+}
+impl AsRef<[u8]> for AdmittedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
 }
 fn static_asset(state: &State, path: &str, method: &Method) -> Result<Response<Body>> {
     if !matches!(*method, Method::GET | Method::HEAD) {
@@ -630,7 +709,7 @@ async fn dispatch(
     peer: Connection,
 ) -> Result<Response<Body>> {
     let path = parts.uri.path();
-    let method = parts.method;
+    let method = parts.method.clone();
     if path == "/api/v1/login" && method == Method::POST {
         if header(&parts.headers, "origin")?.is_none_or(|value| !state.origins.contains(value)) {
             return Err(GatewayError::new("FORBIDDEN"));
@@ -653,6 +732,25 @@ async fn dispatch(
     }
     let (identity, csrf) = auth.ok_or_else(|| GatewayError::new("AUTH_FAILED"))?;
     state.core.auth.check(&identity, None, None)?;
+    if path == "/mcp" {
+        let reply = state.mcp.handle(parts, body, identity.clone()).await?;
+        let (parts, body) = reply.response.into_parts();
+        if let Some(lifetime) = reply.lifetime {
+            let lease = stream_lease(&state, &identity, None, peer, None, Some(lifetime))?;
+            let stream = stream::unfold((body, lease), |(mut body, lease)| async move {
+                let frame = body.frame().await?;
+                Some((frame.map_err(|never| match never {}), (body, lease)))
+            });
+            return Ok(Response::from_parts(
+                parts,
+                StreamBody::new(stream).boxed_unsync(),
+            ));
+        }
+        return Ok(Response::from_parts(
+            parts,
+            body.map_err(|never| match never {}).boxed_unsync(),
+        ));
+    }
     let route = path
         .strip_prefix("/api/v1/")
         .unwrap_or("")
@@ -914,7 +1012,8 @@ fn stream_lease(
     identity: &Identity,
     session: Option<String>,
     peer: Connection,
-    scope: &'static str,
+    scope: Option<&'static str>,
+    stop: Option<CancellationToken>,
 ) -> Result<StreamLease> {
     let slot = state
         .streams
@@ -933,10 +1032,11 @@ fn stream_lease(
     let lifetime = alive.clone();
     let core = state.core.clone();
     let who = identity.clone();
+    let stop = stop.unwrap_or_default();
     state.tasks.spawn(async move {
         loop {
-            tokio::select! {biased;_=lifetime.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(1))=>()};
-            let checked=if let Some(id)=&session {core.session(&who,id).and_then(|session|core.auth.check(&who,Some(scope),Some(&session.device_id)).map(|_|()))} else {core.auth.check(&who,Some(scope),None).map(|_|())};
+            tokio::select! {biased;_=lifetime.cancelled()=>break,_=stop.cancelled()=>{peer.cancellation.cancel();break;},_=tokio::time::sleep(Duration::from_secs(1))=>()};
+            let checked=if let Some(id)=&session {core.session(&who,id).and_then(|session|core.auth.check(&who,scope,Some(&session.device_id)).map(|_|()))} else {core.auth.check(&who,scope,None).map(|_|())};
             if checked.is_err() {peer.cancellation.cancel();break;}
         }
     });
@@ -966,7 +1066,8 @@ fn video(
         &identity,
         Some(id.into()),
         peer.clone(),
-        "video:read",
+        Some("video:read"),
+        None,
     )?;
     runtime.media.retain(&consumer, Profile::Overview);
     lease.consumer = Some((runtime.media.clone(), consumer));
@@ -1038,7 +1139,14 @@ fn events(
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
     let (history, receiver) = state.core.subscribe_events(instance, cursor);
-    let lease = stream_lease(&state, &identity, None, peer.clone(), "devices:read")?;
+    let lease = stream_lease(
+        &state,
+        &identity,
+        None,
+        peer.clone(),
+        Some("devices:read"),
+        None,
+    )?;
     let core = state.core.clone();
     let initial = VecDeque::from(history);
     let stream = stream::unfold(
@@ -1082,4 +1190,33 @@ fn events(
         .header("connection", "keep-alive")
         .body(StreamBody::new(stream).boxed_unsync())
         .unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ipv6_rate_windows_group_a_56_bit_prefix_and_preserve_mapped_ipv4() {
+        let key = |ip: &str| rate_limit_key(ip.parse().unwrap());
+        assert_eq!(key("2001:db8:1234:56ff::1"), key("2001:db8:1234:56aa::2"));
+        assert_ne!(key("2001:db8:1234:56ff::1"), key("2001:db8:1234:57aa::2"));
+        assert_eq!(key("::ffff:127.0.0.1"), key("127.0.0.1"));
+        assert_ne!(key("127.0.0.1"), key("127.0.0.2"));
+    }
+    #[tokio::test]
+    async fn outbound_bytes_keep_admission_after_the_http_body_has_been_dropped() {
+        let slots = Arc::new(Semaphore::new(1));
+        let mut body = admitted_body(
+            full("buffered response"),
+            slots.clone().try_acquire_owned().unwrap(),
+        );
+        let bytes = body.frame().await.unwrap().unwrap().into_data().unwrap();
+        let buffered = bytes.clone();
+        drop(body);
+        drop(bytes);
+        assert_eq!(slots.available_permits(), 0);
+        assert_eq!(&buffered[..], b"buffered response");
+        drop(buffered);
+        assert_eq!(slots.available_permits(), 1);
+    }
 }

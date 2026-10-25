@@ -2,7 +2,7 @@
 
 Ein lokaler KVM-Daemon für Menschen und Computer-Use-Clients. Der POC unterstützt **PiKVM v4, JetKVM sowie GL.iNet Comet GL-RM1 und GL-RM10** mit Fokus auf **geringe Computer-Use-Latenz**. Weitere Hardware erhält eigene Adapter; PiKVM-Protokollkompatibilität wird nicht vorausgesetzt.
 
-Die laufende [Rust-Portierung](docs/rust-port.md) enthält einen nativen HTTP-Daemon und eine CLI mit eingebetteter Vue-Oberfläche, Persistenz, Autorisierung, Computer-Use-Core, geteilten Medien, Simulator und PiKVM-/Comet-Netzwerkadaptern. Dieser Zwischenstand ist separat prüfbar; MCP-Transporte, JetKVM, Audio und Plugins fehlen noch. Der vollständige TypeScript-Daemon wird weiterhin wie unten gestartet. Native Build-/Startbefehle, Funktionszuordnung und Prüfgrenzen stehen im Portierungsdokument.
+Die laufende [Rust-Portierung](docs/rust-port.md) enthält einen nativen HTTP-/MCP-Daemon und eine CLI mit stdio-Bridge, eingebetteter Vue-Oberfläche, Persistenz, Autorisierung, Computer-Use-Core, geteilten Medien, Simulator und PiKVM-/Comet-Netzwerkadaptern. Dieser Zwischenstand ist separat prüfbar; JetKVM, Audio und Plugins fehlen noch. Der vollständige TypeScript-Daemon wird weiterhin wie unten gestartet. Native Build-/Startbefehle, Funktionszuordnung und Prüfgrenzen stehen im Portierungsdokument.
 
 ## Start
 

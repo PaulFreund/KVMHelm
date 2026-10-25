@@ -27,6 +27,12 @@ jobs:
       - name: Native executable with embedded Vue assets
         shell: bash
         run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/ui-layout.mjs
+      - name: Native MCP HTTP and stdio interop and recovery
+        shell: bash
+        run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-mcp-interop.mjs
+      - name: Native stdio bridge against reference TypeScript daemon
+        shell: bash
+        run: KVMHELM_TEST_DAEMON=typescript KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-mcp-interop.mjs
   docker:
     runs-on: ubuntu-latest
     steps:

@@ -16,6 +16,14 @@ import { keyName, textKeys } from "../dist/server/drivers/keyboard.js";
 import { usbKey } from "../dist/server/drivers/usb-key.js";
 import { isLocalAddress } from "../dist/server/network.js";
 import { PiKvmDriver } from "../dist/server/drivers/pikvm.js";
+import { mcpServer } from "../dist/server/mcp.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import {
+  LATEST_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "@modelcontextprotocol/sdk/types.js";
+import { ipKeyGenerator } from "express-rate-limit";
 
 const [command, dir] = process.argv.slice(2);
 const deviceId = "11111111-1111-4111-8111-111111111111";
@@ -549,7 +557,59 @@ async function hidTranscript() {
   }
 }
 
-if (command === "hid")
+if (command === "rate-keys") {
+  const values = [
+    "127.0.0.1",
+    "192.168.1.1",
+    "192.168.1.2",
+    "::ffff:127.0.0.1",
+    "::ffff:c0a8:101",
+    "::",
+    "::1",
+    "2001:db8:1234:56ff::1",
+    "2001:db8:1234:56aa::2",
+    "2001:db8:1234:57aa::2",
+    "fe80:1234:5678:12ff::9",
+    "FE80:1234:5678:12AA::1",
+  ];
+  process.stdout.write(
+    JSON.stringify(
+      values.map((value) => ({ value, key: ipKeyGenerator(value) })),
+    ),
+  );
+} else if (command === "mcp-contract") {
+  // Capture the public contract from the actual SDK registration, including
+  // Zod's JSON Schemas. No store, daemon or hardware is involved.
+  const server = mcpServer(
+    {
+      tool() {
+        throw Error("No tool execution in metadata fixture");
+      },
+    },
+    {},
+  );
+  const client = new Client({ name: "contract fixture", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = {
+      protocolVersion: LATEST_PROTOCOL_VERSION,
+      versions: SUPPORTED_PROTOCOL_VERSIONS,
+      serverInfo: client.getServerVersion(),
+      capabilities: client.getServerCapabilities(),
+      instructions: client.getInstructions(),
+      tools: (await client.listTools()).tools,
+    };
+    const text = JSON.stringify(result, null, 2) + "\n";
+    if (dir) await writeFile(dir, text, { flag: "w" });
+    else process.stdout.write(text);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+} else if (command === "hid")
   process.stdout.write(JSON.stringify(await hidTranscript()));
 else if (command === "core")
   process.stdout.write(JSON.stringify(await coreTranscript()));

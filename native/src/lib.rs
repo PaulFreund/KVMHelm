@@ -9,6 +9,8 @@ pub mod drivers;
 pub mod error;
 pub mod keyboard;
 pub mod mcp;
+mod mcp_bridge;
+mod mcp_http;
 pub mod media;
 pub mod network;
 mod private_fs;

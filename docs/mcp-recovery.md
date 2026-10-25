@@ -14,6 +14,8 @@ The interop regression leaves the same stdio process connected while the HTTP se
 
 ## Rollout and operation
 
+The [native Rust branch](rust-port.md) now includes `kvmhelm mcp --transport stdio`. Its HTTP session recovery follows the same policy: only tool listing and `list_computers` may retry once, and uncertain input is never replayed. The native interop check uses the original TypeScript client against copied native binaries with an empty PATH, and can also run that native bridge against the reference TypeScript daemon using `KVMHELM_TEST_DAEMON=typescript`. It drops a reply after accepted synthetic input and verifies one upstream call, credential-file rereading, EOF cleanup and recovery in the same stdio process. Rejected requests such as HTTP 429 retain valid control instead of being mistaken for a lost connection. JetKVM, audio and plugins still require the complete TypeScript daemon; this is not a production service migration.
+
 Already running Node bridge processes cannot load an edited module automatically. The configuration was updated, but the existing Codex task was retested and still used its old process. Reload MCP connections in the host, or restart Codex once, to load this bridge update. A gateway restart alone does not replace the host-owned bridge. Subsequent gateway restarts are handled by the updated bridge.
 
 The daemon is still a manually launched POC process, not an automatically restarted Windows service. Reconnection cannot bring an unavailable daemon back; once it is running again the bridge can recover. Before planned updates, finish active input batches and release control. After deployment, test an already-open MCP client across a server restart rather than testing only fresh clients.
