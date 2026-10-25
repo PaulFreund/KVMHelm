@@ -36,6 +36,9 @@ jobs:
       - name: Native JetKVM with an actual local WebRTC peer
         shell: bash
         run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-jetkvm-interop.mjs
+      - name: Native Janus audio and existing Vue microphone lifecycle
+        shell: bash
+        run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-audio-interop.mjs
   docker:
     runs-on: ubuntu-latest
     steps:

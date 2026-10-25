@@ -1,5 +1,6 @@
 //! HTTP entry point for the shared Core. Accepted work is owned independently
 //! of a socket; body streams own bounded subscriptions and connection monitors.
+mod audio;
 use crate::{
     GatewayError, Result,
     auth::{Identity, bearer_client},
@@ -118,6 +119,7 @@ impl Budgets {
 pub struct Connection {
     pub peer: SocketAddr,
     pub cancellation: CancellationToken,
+    _socket: Arc<OwnedSemaphorePermit>,
 }
 struct State {
     core: Arc<Core>,
@@ -134,6 +136,7 @@ struct State {
     token_streams: Mutex<HashMap<String, usize>>,
     tasks: TaskTracker,
     cancel: CancellationToken,
+    audio: audio::Tickets,
 }
 pub struct Server {
     pub address: SocketAddr,
@@ -242,6 +245,7 @@ impl Server {
             token_streams: Mutex::new(HashMap::new()),
             tasks: TaskTracker::new(),
             cancel: CancellationToken::new(),
+            audio: audio::Tickets::default(),
         });
         let endpoint = state.mcp.clone();
         let endpoint_stop = state.cancel.clone();
@@ -264,8 +268,8 @@ impl Server {
                     accepted=listener.accept()=>if let Ok((tcp,peer))=accepted {
                         let Ok(slot)=slots.clone().try_acquire_owned() else {continue;};
                         let app=app.clone();let tls=tls.clone();
-                        connections.spawn(async move {let _slot=slot;
-                            let connection=Connection {peer,cancellation:app.cancel.child_token()};
+                        connections.spawn(async move {
+                            let connection=Connection {peer,cancellation:app.cancel.child_token(),_socket:Arc::new(slot)};
                             if let Some(tls)=tls {
                                 tokio::select! {biased;_=app.cancel.cancelled()=>(),stream=tokio::time::timeout(Duration::from_secs(5),tls.accept(tcp))=>if let Ok(Ok(stream))=stream {serve_connection(stream,app,connection).await;}}
                             } else {serve_connection(tcp,app,connection).await;}
@@ -496,7 +500,7 @@ async fn entry(state: Arc<State>, request: Request<Incoming>) -> Response<Body> 
     response
 }
 async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<Response<Body>> {
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
     let path = parts.uri.path().to_owned();
     if header(&parts.headers, "host")?.is_none_or(|value| !state.authorities.contains(value))
         || header(&parts.headers, "origin")?.is_some_and(|value| !state.origins.contains(value))
@@ -518,6 +522,9 @@ async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<
         .get::<Connection>()
         .cloned()
         .ok_or_else(|| GatewayError::new("INTERNAL_ERROR"))?;
+    if path == "/api/v1/audio" && parts.method == Method::GET {
+        return audio::upgrade(state, &mut parts, peer);
+    }
     let api = path == "/api" || path.starts_with("/api/") || path == "/mcp";
     if !api {
         return static_asset(&state, &path, &parts.method);
@@ -888,6 +895,15 @@ async fn dispatch(
                 .await?
         }
         (Method::GET, ["sessions"]) => json!(state.core.sessions(&identity)?),
+        (Method::POST, ["sessions", id, "audio"]) => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                microphone: bool,
+            }
+            let input: Input = parse(body)?;
+            json!({"ticket":state.audio.issue(&state.core,&identity,id,input.microphone)?})
+        }
         (Method::POST, ["tools", name]) => {
             if ![
                 "list_computers",

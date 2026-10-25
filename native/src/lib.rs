@@ -28,3 +28,4 @@ pub use shared::monotonic_ms;
 pub mod web_assets {
     include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
 }
+pub mod audio;

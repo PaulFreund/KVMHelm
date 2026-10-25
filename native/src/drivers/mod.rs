@@ -1,9 +1,11 @@
 pub mod frames;
 pub mod h264;
+pub mod janus;
 mod jet_peer;
 pub mod jetkvm;
 pub mod network_hid;
 pub mod pikvm;
+mod rtc_lan;
 pub mod simulator;
 
 use crate::{
@@ -18,6 +20,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 pub type VideoStream = Pin<Box<dyn Stream<Item = Result<DriverFrame>> + Send>>;
+pub type AudioStream = Pin<Box<dyn Stream<Item = Result<crate::audio::AudioChunk>> + Send>>;
 
 #[derive(Clone, Debug)]
 pub enum DriverEvent {
@@ -61,6 +64,20 @@ impl ActionContext {
 
 #[async_trait]
 pub trait KvmDriver: Send + Sync {
+    async fn subscribe_audio(&self, _cancellation: CancellationToken) -> Result<AudioStream> {
+        Err(GatewayError::new("UNSUPPORTED_ACTION"))
+    }
+    async fn set_microphone(&self, enabled: bool, _context: Option<ActionContext>) -> Result<()> {
+        if enabled {
+            Err(GatewayError::new("UNSUPPORTED_ACTION"))
+        } else {
+            Ok(())
+        }
+    }
+    async fn send_audio(&self, _data: Arc<[u8]>, context: &ActionContext) -> Result<()> {
+        context.check()?;
+        Err(GatewayError::new("UNSUPPORTED_ACTION"))
+    }
     /// Persistent adapters tag callbacks so delayed events from a replaced
     /// connection cannot revoke or overwrite the current connection.
     fn connection_epoch(&self) -> u64 {

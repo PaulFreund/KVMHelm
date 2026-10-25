@@ -244,7 +244,7 @@ pub async fn run() -> Result<()> {
     let command = args.positions.first().map(String::as_str).unwrap_or("help");
     if command == "help" {
         println!(
-            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  secrets cleanup\n  doctor\nUse --data and --secrets for separate protected storage locations. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Audio and plugin runtime integration are still in progress; use the documented TypeScript daemon for the complete feature set."
+            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  secrets cleanup\n  doctor\nUse --data and --secrets for separate protected storage locations. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugin runtime integration and full parity validation are still in progress; use the documented TypeScript daemon for the complete feature set."
         );
         return Ok(());
     }

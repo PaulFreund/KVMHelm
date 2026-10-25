@@ -322,6 +322,7 @@ pub struct Core {
     pub instance_id: String,
     pub limits: Limits,
     pub lease_ms: u64,
+    pub(crate) audio_microphones: Arc<Mutex<HashMap<String, String>>>,
     state: Mutex<State>,
     factories: Mutex<HashMap<String, DriverFactory>>,
     configuration: DeviceQueue,
@@ -371,6 +372,7 @@ impl Core {
             instance_id: uuid::Uuid::new_v4().to_string(),
             limits,
             lease_ms,
+            audio_microphones: Arc::new(Mutex::new(HashMap::new())),
             state: Mutex::new(State::default()),
             factories: Mutex::new(HashMap::new()),
             configuration: DeviceQueue::new(),
@@ -973,6 +975,50 @@ impl Core {
             return Err(GatewayError::new("LEASE_EXPIRED"));
         }
         Ok(())
+    }
+    pub fn authorize_audio(
+        &self,
+        identity: &Identity,
+        id: &str,
+        microphone: bool,
+        generation: Option<u64>,
+    ) -> Result<Arc<Runtime>> {
+        let session = self.session(identity, id)?;
+        let runtime = self.get(&session.device_id)?;
+        if session.state.lock().unwrap().connection_generation != runtime.media.identity().1 {
+            return Err(GatewayError::new("SESSION_LOST"));
+        }
+        self.auth
+            .check(identity, Some("audio:read"), Some(&session.device_id))?;
+        if microphone {
+            self.auth
+                .check(identity, Some("audio:write"), Some(&session.device_id))?;
+            self.assert_control(identity, &session, &runtime, generation)?;
+        }
+        Ok(runtime)
+    }
+    pub fn audio_context(
+        self: &Arc<Self>,
+        identity: &Identity,
+        id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ActionContext> {
+        let runtime = self.authorize_audio(identity, id, true, None)?;
+        let generation = runtime.state.lock().unwrap().generation;
+        let core = Arc::downgrade(self);
+        let identity = identity.clone();
+        let id = id.to_owned();
+        Ok(ActionContext {
+            cancellation,
+            width: 0,
+            height: 0,
+            assert_control: Arc::new(move || {
+                core.upgrade()
+                    .ok_or_else(|| GatewayError::new("LEASE_REVOKED"))?
+                    .authorize_audio(&identity, &id, true, Some(generation))
+                    .map(|_| ())
+            }),
+        })
     }
     async fn acquire(
         self: &Arc<Self>,

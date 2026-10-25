@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { JetKvmDriver } from "../dist/server/drivers/jetkvm.js";
 import { deviceSchema } from "../dist/shared/contracts.js";
 
@@ -376,7 +376,54 @@ try {
   const listed = await api("/devices");
   assert.equal(listed[0].capabilities.keyboard.hid, true);
   assert.equal(listed[0].capabilities.audio.to_target, false);
-  assert.equal(listed[0].capabilities.audio.from_target, false);
+  assert.equal(listed[0].capabilities.audio.from_target, true);
+  const audioTicket = await api(`/sessions/${session}/audio`, "POST", {
+    microphone: false,
+  });
+  const audio = new WebSocket(
+    gateway.replace("http:", "ws:") + "/api/v1/audio",
+    { origin: gateway },
+  );
+  const audioMessages = [];
+  audio.on("message", (data, binary) =>
+    audioMessages.push(
+      binary ? Buffer.from(data) : JSON.parse(data.toString()),
+    ),
+  );
+  await new Promise((resolve, reject) => {
+    audio.once("open", resolve);
+    audio.once("error", reject);
+  });
+  audio.send(JSON.stringify({ ticket: audioTicket.ticket }));
+  try {
+    await until(() => audioMessages.some((m) => m.ready), "Native audio ready");
+    await until(
+      () =>
+        audioMessages.some((m) => Buffer.isBuffer(m) && m.some((v) => v !== 0)),
+      "Decoded Chromium Opus tone",
+    );
+    assert.ok(
+      audioMessages
+        .filter(Buffer.isBuffer)
+        .every((m) => m.length % 4 === 0 && m.length <= 23040),
+    );
+  } finally {
+    const closed = new Promise((resolve) => audio.once("close", resolve));
+    audio.close();
+    await closed;
+  }
+  const unsupportedMic = await fetch(
+    gateway + `/api/v1/sessions/${session}/audio`,
+    {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + pat,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ microphone: true }),
+    },
+  );
+  assert.equal((await unsupportedMic.json()).error.code, "UNSUPPORTED_ACTION");
   // Compare exact reports against actual inherited TS planning and Jet USB
   // conversion, rather than a second expected implementation in this fixture.
   const actions = [
@@ -637,7 +684,7 @@ try {
   );
   await remove(setup);
   console.log(
-    "Native JetKVM: actual H.264/JPEG, exact USB reports, auth/reconnect, replay/unknown RPC, live state, stream cleanup and ICE guards passed",
+    "Native JetKVM: actual H.264/JPEG and Opus/PCM, exact USB reports, auth/reconnect, replay/unknown RPC, live state, stream cleanup and ICE guards passed",
   );
 } finally {
   // Delete configured devices first, so owned helpers are reaped even when a

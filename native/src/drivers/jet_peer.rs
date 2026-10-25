@@ -3,19 +3,20 @@
 use super::{
     ActionContext,
     h264::{Decoder, H264Assembler},
+    rtc_lan::RtcLan,
 };
 use crate::{
     GatewayError, Result,
+    audio::{OpusReceiver, Source},
     media::DriverFrame,
-    network::{check_ice_candidate, check_ice_description, is_local_address},
+    network::{check_ice_candidate, check_ice_description},
     transport::Socket,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
-use futures_util::{SinkExt, StreamExt, stream::FuturesUnordered};
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    net::SocketAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -24,14 +25,12 @@ use str0m::{
     change::SdpPendingOffer,
     channel::ChannelId,
     media::{Direction, KeyframeRequestKind, MediaKind, Mid},
-    net::{Protocol, Receive},
 };
 use tokio::{
-    net::UdpSocket,
     sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch},
     task::JoinHandle,
 };
-use tokio_tungstenite::{MaybeTlsStream, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(2);
@@ -53,6 +52,7 @@ pub(super) struct Peer {
     slots: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
     pub frames: watch::Receiver<Option<DriverFrame>>,
+    pub audio: Arc<Source>,
     ready: watch::Receiver<bool>,
     fault: watch::Receiver<Option<GatewayError>>,
     pub cancel: CancellationToken,
@@ -80,56 +80,11 @@ fn rtc_error(_: impl std::fmt::Display) -> GatewayError {
 impl Peer {
     pub async fn start(
         mut ws: Socket,
+        device_id: String,
         callback: EventCallback,
         disconnected: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Arc<Self>> {
-        // Retain LAN gathering on multihomed hosts, including loopback
-        // signaling to a peer whose media uses another local interface.
-        let local = match ws.get_ref() {
-            MaybeTlsStream::Plain(tcp) => tcp.local_addr(),
-            MaybeTlsStream::Rustls(tls) => tls.get_ref().0.local_addr(),
-            _ => return Err(offline()),
-        }
-        .map_err(rtc_error)?;
-        if !is_local_address(&local.ip().to_string()) {
-            return Err(GatewayError::new("INVALID_ADDRESS"));
-        }
-        let mut addresses = vec![SocketAddr::new(local.ip(), 0)];
-        let interfaces = tokio::task::spawn_blocking(if_addrs::get_if_addrs)
-            .await
-            .map_err(rtc_error)?
-            .map_err(rtc_error)?;
-        for interface in interfaces {
-            let ip = interface.ip();
-            if ip.is_ipv4()
-                && is_local_address(&ip.to_string())
-                && !addresses.iter().any(|a| a.ip() == ip)
-                && !matches!(
-                    interface.oper_status,
-                    if_addrs::IfOperStatus::Down
-                        | if_addrs::IfOperStatus::NotPresent
-                        | if_addrs::IfOperStatus::LowerLayerDown
-                )
-            {
-                addresses.push(SocketAddr::new(ip, 0));
-            }
-        }
-        if addresses.len() > 16 {
-            return Err(GatewayError::message(
-                "RESOURCE_LIMIT",
-                "JetKVM supports at most sixteen local ICE interfaces",
-            ));
-        }
-        let mut sockets = HashMap::new();
-        for address in addresses {
-            match UdpSocket::bind(address).await {
-                Ok(socket) => {
-                    sockets.insert(socket.local_addr().map_err(rtc_error)?, Arc::new(socket));
-                }
-                Err(_) if address.ip() != local.ip() => (),
-                Err(_) => return Err(offline()),
-            }
-        }
+        let lan = RtcLan::new(&ws).await?;
         let mut rtc = RtcConfig::new()
             .clear_codecs()
             .enable_h264(true)
@@ -138,14 +93,11 @@ impl Peer {
             .set_rtp_mode(true)
             .set_sctp_max_buffered_amount(65536)
             .build(Instant::now());
-        for local in sockets.keys() {
-            rtc.add_local_candidate(Candidate::host(*local, "udp").map_err(rtc_error)?)
-                .ok_or_else(offline)?;
-        }
+        lan.add_candidates(&mut rtc)?;
         let mut change = rtc.sdp_api();
         let channel = change.add_channel("rpc".into());
         let video = change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
-        change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+        let audio_mid = change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
         let (offer, pending) = change.apply().ok_or_else(offline)?;
         let encoded = STANDARD.encode(serde_json::to_vec(&offer).map_err(rtc_error)?);
         let decoder = Decoder::start().await?;
@@ -166,12 +118,18 @@ impl Peer {
         let (fault, fault_rx) = watch::channel(None);
         let cancel = CancellationToken::new();
         let lifetime = cancel.clone();
+        let audio = Source::new(device_id, 8, 1);
+        let audio_source = audio.clone();
         let worker = tokio::spawn(async move {
             let mut engine = EngineState {
                 rtc,
                 pending_offer: Some(pending),
                 channel,
                 video,
+                audio_mid,
+                audio: audio_source.clone(),
+                opus: None,
+                audio_available: false,
                 open: false,
                 candidates: 0,
                 sequence: 0,
@@ -183,11 +141,12 @@ impl Peer {
                 callback,
                 ready,
             };
-            if let Err(error) = run(&mut engine, ws, sockets, receiver, &decoder, &lifetime).await {
+            if let Err(error) = run(&mut engine, ws, lan, receiver, &decoder, &lifetime).await {
                 fault.send_replace(Some(error));
             }
             engine.pending.clear(); // All uncertain calls fail, never resend.
             engine.rtc.disconnect();
+            audio_source.closed.cancel();
             decoder.close().await;
             if !lifetime.is_cancelled() {
                 disconnected();
@@ -199,6 +158,7 @@ impl Peer {
             slots: Arc::new(Semaphore::new(64)),
             bytes: Arc::new(Semaphore::new(65536)),
             frames,
+            audio,
             ready: ready_rx,
             fault: fault_rx,
             cancel,
@@ -273,6 +233,7 @@ impl Peer {
     }
     pub async fn close(&self) {
         self.cancel.cancel();
+        self.audio.closed.cancel();
         let worker = self.worker.lock().unwrap().take();
         if let Some(mut worker) = worker
             && tokio::time::timeout(Duration::from_secs(3), &mut worker)
@@ -287,6 +248,7 @@ impl Peer {
 impl Drop for Peer {
     fn drop(&mut self) {
         self.cancel.cancel();
+        self.audio.closed.cancel();
     }
 }
 
@@ -295,6 +257,10 @@ struct EngineState {
     pending_offer: Option<SdpPendingOffer>,
     channel: ChannelId,
     video: Mid,
+    audio_mid: Mid,
+    audio: Arc<Source>,
+    opus: Option<OpusReceiver>,
+    audio_available: bool,
     open: bool,
     candidates: usize,
     sequence: u64,
@@ -457,9 +423,32 @@ impl EngineState {
                             }
                         }
                     }
+                } else if self
+                    .rtc
+                    .direct_api()
+                    .stream_rx(&packet.header.ssrc)
+                    .is_some_and(|s| s.mid() == self.audio_mid)
+                {
+                    if !self.audio_available {
+                        self.audio_available = true;
+                        (self.callback)("audioAvailable", &Value::Null);
+                    }
+                    if self.audio.users() > 0 {
+                        if self.opus.is_none() {
+                            self.opus = Some(OpusReceiver::new()?);
+                        }
+                        if let Some((data, gap)) = self
+                            .opus
+                            .as_mut()
+                            .unwrap()
+                            .decode(packet.header.sequence_number, &packet.payload)
+                        {
+                            self.audio.publish(data, 0, gap);
+                        }
+                    } else if let Some(decoder) = self.opus.as_mut() {
+                        decoder.discontinuity();
+                    }
                 }
-                // Opus reception/PCM distribution belongs to the shared audio
-                // integration; it is not advertised as available in this slice.
             }
             _ => (),
         }
@@ -529,7 +518,7 @@ impl EngineState {
 async fn run(
     engine: &mut EngineState,
     mut ws: Socket,
-    sockets: HashMap<SocketAddr, Arc<UdpSocket>>,
+    mut lan: RtcLan,
     mut requests: mpsc::Receiver<Request>,
     decoder: &Decoder,
     cancel: &CancellationToken,
@@ -538,10 +527,6 @@ async fn run(
     heartbeat.tick().await;
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_pong = Instant::now();
-    let mut readers = FuturesUnordered::new();
-    for socket in sockets.values() {
-        readers.push(receive_udp(socket.clone(), vec![0; 65536]));
-    }
     loop {
         if cancel.is_cancelled() || !engine.rtc.is_alive() {
             return Ok(());
@@ -551,23 +536,7 @@ async fn run(
             match engine.rtc.poll_output().map_err(rtc_error)? {
                 Output::Timeout(timeout) => break timeout,
                 Output::Event(event) => engine.event(event, decoder)?,
-                Output::Transmit(transmit) => {
-                    if !is_local_address(&transmit.destination.ip().to_string()) {
-                        return Err(GatewayError::new("INVALID_ADDRESS"));
-                    }
-                    let udp = sockets.get(&transmit.source).ok_or_else(offline)?;
-                    tokio::select! { biased;
-                        _=cancel.cancelled()=>return Ok(()),
-                        _=tokio::time::timeout(Duration::from_secs(2),udp.send_to(&transmit.contents,transmit.destination))=>{
-                            // A peer may advertise several LAN interfaces. An
-                            // unreachable candidate must not prevent ICE from
-                            // trying another usable pair; accepted RPCs still
-                            // time out as unknown and are never replayed.
-                            // Checks of other pairs continue after nomination.
-                            // ICE/DTLS own reachability and retransmission.
-                        },
-                    }
-                }
+                Output::Transmit(transmit) => lan.transmit(&transmit)?,
             }
         };
         let timeout = timeout.min(
@@ -583,24 +552,7 @@ async fn run(
             _=decoder.fault.cancelled()=>return Err(GatewayError::message("DEVICE_OFFLINE","JetKVM video decoder stopped")),
             _=tokio::time::sleep_until(timeout.into())=>engine.rtc.handle_input(Input::Timeout(Instant::now())).map_err(rtc_error)?,
             request=requests.recv()=>match request {Some(request)=>engine.dispatch(request),None=>return Ok(())},
-            received=readers.next()=>{
-                let (udp,buffer,received)=received.ok_or_else(offline)?;
-                let local=udp.local_addr().map_err(rtc_error)?;
-                let (length,source) = match received {
-                    Ok(received)=>received,
-                    Err(error) if matches!(error.kind(),std::io::ErrorKind::ConnectionReset|std::io::ErrorKind::ConnectionRefused|std::io::ErrorKind::NetworkUnreachable|std::io::ErrorKind::HostUnreachable|std::io::ErrorKind::Interrupted)=>{
-                        readers.push(receive_udp(udp,buffer));continue;
-                    },
-                    Err(_)=>return Err(GatewayError::message("DEVICE_OFFLINE","JetKVM UDP receive stopped")),
-                };
-                if is_local_address(&source.ip().to_string())
-                    && let Ok(contents) = buffer[..length].try_into() {
-                        // Unauthenticated malformed datagrams cannot tear down
-                        // an established peer. DTLS/SRTP authenticate internally.
-                        let _ = engine.rtc.handle_input(Input::Receive(Instant::now(),Receive{proto:Protocol::Udp,source,destination:local,contents}));
-                }
-                readers.push(receive_udp(udp,buffer));
-            },
+            result=lan.receive(&mut engine.rtc)=>result?,
             incoming=ws.next()=>match incoming {
                 Some(Ok(Message::Text(text)))=>engine.signal(text.as_bytes())?,
                 Some(Ok(Message::Binary(bytes)))=>engine.signal(&bytes)?,
@@ -617,18 +569,6 @@ async fn run(
     }
 }
 
-async fn receive_udp(
-    socket: Arc<UdpSocket>,
-    mut buffer: Vec<u8>,
-) -> (
-    Arc<UdpSocket>,
-    Vec<u8>,
-    std::io::Result<(usize, SocketAddr)>,
-) {
-    let received = socket.recv_from(&mut buffer).await;
-    (socket, buffer, received)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,12 +580,17 @@ mod tests {
         let mut change = rtc.sdp_api();
         let channel = change.add_channel("rpc".into());
         let video = change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        let audio_mid = change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
         let (_, pending) = change.apply().unwrap();
         EngineState {
             rtc,
             pending_offer: Some(pending),
             channel,
             video,
+            audio_mid,
+            audio: Source::new("fixture".into(), 8, 1),
+            opus: None,
+            audio_available: false,
             open: false,
             candidates: 0,
             sequence: 0,
@@ -756,6 +701,7 @@ mod tests {
             slots: Arc::new(Semaphore::new(64)),
             bytes: Arc::new(Semaphore::new(65536)),
             frames: watch::channel(None).1,
+            audio: Source::new("fixture".into(), 8, 1),
             ready: watch::channel(true).1,
             fault: watch::channel(None).1,
             cancel: CancellationToken::new(),

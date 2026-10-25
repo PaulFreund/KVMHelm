@@ -1,8 +1,9 @@
 //! PiKVM KVMD HID and video. Comet uses this protocol only through its explicit
-//! adapter below. Native Janus audio is still a separate integration milestone.
+//! adapter below. Janus audio owns a separate, independently retrying lifetime.
 use super::{
     ActionContext, Delivery, DriverEvent, KvmDriver, VideoStream,
     frames::{self, Mjpeg},
+    janus::JanusAudio,
     network_hid::{Hid, HidTransport},
 };
 use crate::{
@@ -55,6 +56,7 @@ pub struct PiKvmDriver {
     link: Mutex<Option<Link>>,
     lifecycle: AsyncMutex<()>,
     hid: Hid,
+    audio: Mutex<Option<Arc<JanusAudio>>>,
 }
 fn headers(secret: &Value) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
@@ -95,7 +97,7 @@ impl PiKvmDriver {
             "video":{"snapshot":true,"stream":true,"formats":["image/jpeg"],"signal":"unknown"},
             "mouse":{"absolute":false,"relative":false,"buttons":["left","middle","right"],"horizontal_scroll":true},
             "keyboard":{"hid":false,"layouts":["us","de"],"text_method":"hid-chords/v1","characters":"US / DE mapping v1"},
-            "audio":{"from_target":false,"to_target":false,"formats":[],"reason":"Native Janus audio integration pending"},
+            "audio":{"from_target":false,"to_target":false,"formats":[],"reason":"Audio unavailable"},
             "timebase":{"source_timestamp":false,"uncertainty_ms":null},"extensions":{}
         })).map_err(|_|GatewayError::invalid())?;
         let (events, _) = broadcast::channel(16);
@@ -110,10 +112,15 @@ impl PiKvmDriver {
             link: Mutex::new(None),
             lifecycle: AsyncMutex::new(()),
             hid: Hid::default(),
+            audio: Mutex::new(None),
         })
     }
     async fn disconnect_link(&self) {
         self.inner.epoch.fetch_add(1, Ordering::AcqRel);
+        let audio = self.audio.lock().unwrap().take();
+        if let Some(audio) = audio {
+            audio.close().await;
+        }
         let link = self.link.lock().unwrap().take();
         if let Some(link) = link {
             link.cancel.cancel();
@@ -144,6 +151,10 @@ impl PiKvmDriver {
             caps.mouse.relative = !caps.mouse.absolute;
             caps.keyboard.hid = hid["keyboard"]["online"] == true;
             caps.video.signal = Signal::Unknown;
+            caps.audio.from_target = false;
+            caps.audio.to_target = false;
+            caps.audio.formats.clear();
+            caps.audio.reason = Some("Audio unavailable".into());
         }
         let ws = self.transport.websocket("/api/ws", cancel).await?;
         let epoch = self.inner.epoch.fetch_add(1, Ordering::AcqRel) + 1;
@@ -168,6 +179,19 @@ impl PiKvmDriver {
             result=self.release_all_inputs()=>result?,
         }
         guard.disarm();
+        let inner = self.inner.clone();
+        let audio = JanusAudio::start(
+            self.transport.clone(),
+            self.device.device_id.clone().unwrap_or_default(),
+            Arc::new(move |caps| {
+                let mut current = inner.capabilities.lock().unwrap();
+                if inner.epoch.load(Ordering::Acquire) == epoch {
+                    current.audio = caps;
+                    let _ = inner.events.send(DriverEvent::CapabilitiesChangedAt(epoch));
+                }
+            }),
+        );
+        *self.audio.lock().unwrap() = Some(audio);
         Ok(())
     }
 }
@@ -301,6 +325,32 @@ impl HidTransport for PiKvmDriver {
 }
 #[async_trait]
 impl KvmDriver for PiKvmDriver {
+    async fn subscribe_audio(&self, cancel: CancellationToken) -> Result<super::AudioStream> {
+        let audio = self
+            .audio
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| GatewayError::new("UNSUPPORTED_ACTION"))?;
+        audio.subscribe(cancel).await
+    }
+    async fn set_microphone(&self, enabled: bool, context: Option<ActionContext>) -> Result<()> {
+        let audio = self.audio.lock().unwrap().clone();
+        match audio {
+            Some(audio) => audio.microphone(enabled, context).await,
+            None if !enabled => Ok(()),
+            _ => Err(GatewayError::new("UNSUPPORTED_ACTION")),
+        }
+    }
+    async fn send_audio(&self, data: Arc<[u8]>, context: &ActionContext) -> Result<()> {
+        let audio = self
+            .audio
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| GatewayError::new("UNSUPPORTED_ACTION"))?;
+        audio.send(data, context)
+    }
     fn connection_epoch(&self) -> u64 {
         self.inner.epoch.load(Ordering::Acquire)
     }
@@ -397,6 +447,9 @@ impl KvmDriver for PiKvmDriver {
             .await
     }
     async fn release_all_inputs(&self) -> Result<()> {
+        if let Some(audio) = self.audio.lock().unwrap().as_ref() {
+            audio.stop_microphone();
+        }
         let connected = self
             .link
             .lock()
@@ -451,6 +504,15 @@ impl CometDriver {
 }
 #[async_trait]
 impl KvmDriver for CometDriver {
+    async fn subscribe_audio(&self, cancel: CancellationToken) -> Result<super::AudioStream> {
+        self.0.subscribe_audio(cancel).await
+    }
+    async fn set_microphone(&self, enabled: bool, context: Option<ActionContext>) -> Result<()> {
+        self.0.set_microphone(enabled, context).await
+    }
+    async fn send_audio(&self, data: Arc<[u8]>, context: &ActionContext) -> Result<()> {
+        self.0.send_audio(data, context).await
+    }
     fn connection_epoch(&self) -> u64 {
         self.0.connection_epoch()
     }

@@ -74,7 +74,7 @@ impl JetKvmDriver {
             "video":{"snapshot":true,"stream":true,"formats":["image/jpeg"],"signal":"unknown"},
             "mouse":{"absolute":false,"relative":false,"buttons":["left","middle","right"],"horizontal_scroll":true},
             "keyboard":{"hid":false,"layouts":["us","de"],"text_method":"hid-chords/v1","characters":"US / DE mapping v1"},
-            "audio":{"from_target":false,"to_target":false,"formats":[],"reason":"Native JetKVM Opus/PCM integration pending; microphone transmission is unavailable"},
+            "audio":{"from_target":false,"to_target":false,"formats":[],"reason":"No incoming JetKVM audio track detected; microphone transmission is unavailable"},
             "timebase":{"source_timestamp":false,"uncertainty_ms":null},
             "extensions":{"vendor":"JetKVM","protocol":"webrtc-jsonrpc","decoder":"ffmpeg-h264"}
         })).map_err(|_|GatewayError::invalid())?;
@@ -181,11 +181,18 @@ impl JetKvmDriver {
             .websocket_headers("/webrtc/signaling/client", self.headers(), caller)
             .await?;
         let epoch = self.inner.epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        self.inner.caps.lock().unwrap().video.signal = Signal::Unknown;
+        {
+            let mut caps = self.inner.caps.lock().unwrap();
+            caps.video.signal = Signal::Unknown;
+            caps.audio.from_target = false;
+            caps.audio.formats.clear();
+            caps.audio.reason = Some("No incoming WebRTC audio track detected".into());
+        }
         let inner = self.inner.clone();
         let disconnected_inner = inner.clone();
         let peer = Peer::start(
             ws,
+            self.device.device_id.clone().unwrap_or_default(),
             Arc::new(move |method, params| apply_event(&inner, epoch, method, params)),
             Arc::new(move || {
                 if disconnected_inner.epoch.load(Ordering::Acquire) == epoch {
@@ -226,6 +233,13 @@ fn apply_event(inner: &Inner, epoch: u64, method: &str, params: &Value) {
             caps.keyboard.hid = params == "configured";
             caps.mouse.absolute = caps.keyboard.hid;
             caps.mouse.relative = caps.keyboard.hid;
+        }
+        "audioAvailable" => {
+            caps.audio.from_target = true;
+            caps.audio.to_target = false;
+            caps.audio.formats = vec!["pcm_s16le".into()];
+            caps.audio.reason =
+                Some("Incoming WebRTC audio; microphone transmission is unavailable".into());
         }
         _ => (),
     }
@@ -319,6 +333,12 @@ impl HidTransport for JetKvmDriver {
 }
 #[async_trait]
 impl KvmDriver for JetKvmDriver {
+    async fn subscribe_audio(&self, cancellation: CancellationToken) -> Result<super::AudioStream> {
+        if !self.inner.caps.lock().unwrap().audio.from_target {
+            return Err(GatewayError::new("UNSUPPORTED_ACTION"));
+        }
+        self.peer()?.audio.subscribe(cancellation)
+    }
     fn connection_epoch(&self) -> u64 {
         self.inner.epoch.load(Ordering::Acquire)
     }
