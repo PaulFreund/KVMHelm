@@ -15,6 +15,7 @@ import {
 import { keyName, textKeys } from "../dist/server/drivers/keyboard.js";
 import { usbKey } from "../dist/server/drivers/usb-key.js";
 import { isLocalAddress } from "../dist/server/network.js";
+import { PiKvmDriver } from "../dist/server/drivers/pikvm.js";
 
 const [command, dir] = process.argv.slice(2);
 const deviceId = "11111111-1111-4111-8111-111111111111";
@@ -484,7 +485,73 @@ async function coreTranscript() {
   }
 }
 
-if (command === "core")
+async function hidTranscript() {
+  const device = deviceSchema.parse({
+    name: "HID planning fixture",
+    driver_id: "pikvm-v4",
+    address: "http://127.0.0.1",
+    keyboard_layout: "de",
+  });
+  const driver = new PiKvmDriver(device, {});
+  const cases = [
+    {
+      width: 640,
+      height: 480,
+      action: { type: "click", x: 639, y: 479, button: "right" },
+    },
+    { width: 3, height: 3, action: { type: "move", x: 1, y: 1 } },
+    { width: 1, height: 1, action: { type: "move", x: 0, y: 0 } },
+    {
+      width: 640,
+      height: 480,
+      action: { type: "keypress", keys: ["CTRL", "ENTER"] },
+    },
+    { width: 640, height: 480, action: { type: "type", text: "Ä@´`^YZ" } },
+    {
+      width: 640,
+      height: 480,
+      action: {
+        type: "drag",
+        path: [
+          { x: 0, y: 0 },
+          { x: 10, y: 20 },
+          { x: 639, y: 479 },
+        ],
+      },
+    },
+    { width: 640, height: 480, action: { type: "double_click", x: 10, y: 20 } },
+    ...[50, -50, 150, -150, 1000, -1000].map((scroll_x) => ({
+      width: 640,
+      height: 480,
+      action: { type: "scroll", x: 1, y: 1, scroll_x, scroll_y: scroll_x },
+    })),
+  ];
+  const trace = [];
+  try {
+    for (const { width, height, action: raw } of cases) {
+      const action = actionSchema.parse(raw),
+        events = [];
+      driver.event = async (event_type, event, context) => {
+        context?.assertControl();
+        events.push({ event_type, event });
+      };
+      const status = await driver.execute(action, {
+        width,
+        height,
+        signal: AbortSignal.timeout(1000),
+        assertControl() {},
+      });
+      trace.push({ width, height, action, status, events });
+    }
+    return trace;
+  } finally {
+    await driver.disconnect();
+  }
+}
+
+if (command === "hid")
+  process.stdout.write(JSON.stringify(await hidTranscript()));
+else if (command === "core")
   process.stdout.write(JSON.stringify(await coreTranscript()));
 else if (command === "prepare" || command === "verify") {
   await storage();

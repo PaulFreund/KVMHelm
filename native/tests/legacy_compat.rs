@@ -4,13 +4,71 @@ use kvmhelm::{
     auth::{Auth, TokenSpec},
     contracts::{Action, Device, Layout, SCOPES, ToolRequest, Validate},
     core::{Core, Limits, ToolResult},
+    drivers::{
+        ActionContext,
+        network_hid::{Hid, HidTransport},
+    },
     keyboard::{key_name, text_keys, usb_key},
     network::is_local_address,
     secrets::Secrets,
     store::{Kind, Store},
 };
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command, sync::Arc};
+use std::{
+    fs,
+    path::Path,
+    process::Command,
+    sync::{Arc, Mutex},
+};
+
+struct TraceSink(Mutex<Vec<Value>>);
+#[async_trait::async_trait]
+impl HidTransport for TraceSink {
+    async fn event(
+        &self,
+        kind: &str,
+        value: Value,
+        context: Option<&ActionContext>,
+    ) -> kvmhelm::Result<()> {
+        if let Some(context) = context {
+            context.check()?;
+        }
+        self.0
+            .lock()
+            .unwrap()
+            .push(json!({"event_type":kind,"event":value}));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Node 24, npm dependencies and npm run build"]
+async fn actual_dom_hid_event_sequences_match_for_layouts_drag_scroll_and_rounding() {
+    let cases: Vec<Value> = serde_json::from_str(&legacy("hid", None)).unwrap();
+    for case in cases {
+        let action = Action::parse(case["action"].clone()).unwrap();
+        let sink = TraceSink(Mutex::new(Vec::new()));
+        let hid = Hid::default();
+        let context = ActionContext {
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            width: case["width"].as_u64().unwrap() as u32,
+            height: case["height"].as_u64().unwrap() as u32,
+            assert_control: Arc::new(|| Ok(())),
+        };
+        let status = hid
+            .execute(&sink, &action, &context, Layout::De)
+            .await
+            .unwrap();
+        assert_eq!(json!(status), case["status"]);
+        assert_eq!(
+            json!(*sink.0.lock().unwrap()),
+            case["events"],
+            "{}",
+            case["action"]
+        );
+        assert!(!hid.has_pressed());
+    }
+}
 
 fn legacy(command: &str, dir: Option<&Path>) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));

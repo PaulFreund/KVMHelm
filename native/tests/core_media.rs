@@ -361,7 +361,7 @@ impl Fixture {
         );
         core.load().await.unwrap();
         assert!(core.list(&a).unwrap().is_empty());
-        let device=core.save_device(&a,json!({"name":"Fixture","driver_id":"fixture","transport":"simulator","minimum_action_latency_ms":0}),None,None).await.unwrap();
+        let device=core.save_device(&a,json!({"name":"Fixture","driver_id":"fixture","transport":"simulator","media_profile":"active","minimum_action_latency_ms":0}),None,None).await.unwrap();
         Self {
             core,
             store,
@@ -998,7 +998,10 @@ async fn temporary_video_timeouts_preserve_control_but_disconnect_revokes_it() {
     assert_eq!(code(&result), "FRAME_TIMEOUT");
     assert_eq!(runtime.lease().unwrap().generation, lease.generation);
     assert_eq!(driver.connects.load(Ordering::Acquire), 1);
-    let _ = driver.events.send(DriverEvent::Disconnected);
+    let _ = driver.events.send(DriverEvent::DisconnectedAt(99));
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(runtime.lease().unwrap().generation, lease.generation);
+    let _ = driver.events.send(DriverEvent::DisconnectedAt(0));
     until(|| runtime.lease().is_none()).await;
     driver.capture_fault.store(0, Ordering::Release);
     f.close().await;

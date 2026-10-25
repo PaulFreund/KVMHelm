@@ -1,3 +1,6 @@
+pub mod frames;
+pub mod network_hid;
+pub mod pikvm;
 pub mod simulator;
 
 use crate::{
@@ -17,6 +20,8 @@ pub type VideoStream = Pin<Box<dyn Stream<Item = Result<DriverFrame>> + Send>>;
 pub enum DriverEvent {
     Disconnected,
     CapabilitiesChanged,
+    DisconnectedAt(u64),
+    CapabilitiesChangedAt(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
@@ -53,6 +58,11 @@ impl ActionContext {
 
 #[async_trait]
 pub trait KvmDriver: Send + Sync {
+    /// Persistent adapters tag callbacks so delayed events from a replaced
+    /// connection cannot revoke or overwrite the current connection.
+    fn connection_epoch(&self) -> u64 {
+        0
+    }
     fn events(&self) -> broadcast::Receiver<DriverEvent>;
     async fn connect(&self, cancellation: CancellationToken) -> Result<()>;
     async fn disconnect(&self) -> Result<()>;

@@ -2,7 +2,7 @@
 
 Ein lokaler KVM-Daemon für Menschen und Computer-Use-Clients. Der POC unterstützt **PiKVM v4, JetKVM sowie GL.iNet Comet GL-RM1 und GL-RM10** mit Fokus auf **geringe Computer-Use-Latenz**. Weitere Hardware erhält eigene Adapter; PiKVM-Protokollkompatibilität wird nicht vorausgesetzt.
 
-Die laufende [Rust-Portierung](docs/rust-port.md) enthält native Bibliothekskomponenten für Persistenz, Autorisierung, Computer-Use-Core, geteilte Medien und Simulator samt Kompatibilitätsprüfungen. Der derzeitige Daemonstart ist unten beschrieben; Funktionszuordnung und offene Integrationsschritte stehen im Portierungsdokument.
+Die laufende [Rust-Portierung](docs/rust-port.md) enthält native Bibliothekskomponenten für Persistenz, Autorisierung, Computer-Use-Core, geteilte Medien, Simulator und PiKVM-/Comet-Netzwerkadapter samt Kompatibilitätsprüfungen. Der derzeitige Daemonstart ist unten beschrieben; Funktionszuordnung und offene Integrationsschritte stehen im Portierungsdokument.
 
 ## Start
 

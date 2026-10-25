@@ -5,7 +5,11 @@ use crate::{
         Action, Capabilities, Computer, ControlOperation, Device, Mode, ObservationMode,
         OpenComputer, Profile, Signal, ToolRequest, Transport, Validate,
     },
-    drivers::{ActionContext, DriverEvent, KvmDriver, simulator::Simulator},
+    drivers::{
+        ActionContext, DriverEvent, KvmDriver,
+        pikvm::{CometDriver, PiKvmDriver},
+        simulator::Simulator,
+    },
     media::{Frame, FrameInfo, Media},
     network::device_origin,
     queue::DeviceQueue,
@@ -382,6 +386,14 @@ impl Core {
             "simulator",
             Arc::new(|device, _, _| Ok(Arc::new(Simulator::new(device.keyboard_layout)))),
         );
+        core.register_factory(
+            "pikvm-v4",
+            Arc::new(|device, secret, ca| Ok(Arc::new(PiKvmDriver::new(device, secret, ca)?))),
+        );
+        core.register_factory(
+            "glinet-comet",
+            Arc::new(|device, secret, ca| Ok(Arc::new(CometDriver::new(device, secret, ca)?))),
+        );
         let weak = Arc::downgrade(&core);
         core.auth.set_on_revoke(Arc::new(move |id| {
             let weak = weak.clone();
@@ -587,7 +599,12 @@ impl Core {
         tokio::spawn(async move {
             loop {
                 let fault = tokio::select! {biased;_=cancellation.cancelled()=>break,
-                    event=driver.recv()=>match event {Ok(DriverEvent::CapabilitiesChanged)=>None,Ok(DriverEvent::Disconnected)|Err(broadcast::error::RecvError::Lagged(_))=>Some(GatewayError::new("DEVICE_OFFLINE")),Err(_)=>break},
+                    event=driver.recv()=>match event {
+                        Ok(DriverEvent::CapabilitiesChanged)=>None,
+                        Ok(DriverEvent::CapabilitiesChangedAt(epoch)) if r.upgrade().is_some_and(|runtime|runtime.driver.connection_epoch()==epoch)=>None,
+                        Ok(DriverEvent::DisconnectedAt(epoch)) if r.upgrade().is_some_and(|runtime|runtime.driver.connection_epoch()==epoch)=>Some(GatewayError::new("DEVICE_OFFLINE")),
+                        Ok(DriverEvent::DisconnectedAt(_)|DriverEvent::CapabilitiesChangedAt(_))=>continue,
+                        Ok(DriverEvent::Disconnected)|Err(broadcast::error::RecvError::Lagged(_))=>Some(GatewayError::new("DEVICE_OFFLINE")),Err(_)=>break},
                     fault=media.recv()=>match fault {Ok(error)=>Some(error),Err(broadcast::error::RecvError::Lagged(_))=>Some(GatewayError::new("DEVICE_OFFLINE")),Err(_)=>break},
                 };
                 let (Some(core), Some(runtime)) = (weak.upgrade(), r.upgrade()) else {

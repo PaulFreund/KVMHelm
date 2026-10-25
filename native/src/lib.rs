@@ -15,6 +15,7 @@ mod queue;
 pub mod secrets;
 mod shared;
 pub mod store;
+pub mod transport;
 
 pub use error::{GatewayError, Result};
 pub use shared::monotonic_ms;
