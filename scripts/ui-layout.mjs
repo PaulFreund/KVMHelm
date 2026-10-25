@@ -1,31 +1,76 @@
 import { chromium, expect } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, mkdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  mkdir,
+  copyFile,
+  chmod,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 const dir = await mkdtemp(join(tmpdir(), "kvmhelm-ui-"));
+const native = process.env.KVMHELM_TEST_BINARY;
+let executable = process.execPath;
+if (native) {
+  executable = join(
+    dir,
+    process.platform === "win32" ? "kvmhelm.exe" : "kvmhelm",
+  );
+  await copyFile(resolve(native), executable);
+  await chmod(executable, 0o700);
+}
+const prefix = native ? [] : [resolve("dist/server/cli.js")];
+const childEnv = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([key]) => !key.toUpperCase().startsWith("KVMHELM_"),
+  ),
+);
+if (native) childEnv.PATH = "";
+const childOptions = {
+  cwd: native ? dir : process.cwd(),
+  env: childEnv,
+  windowsHide: true,
+};
 const args = ["--data", join(dir, "data"), "--secrets", join(dir, "secrets")];
 const patFile = join(dir, "secrets", "cli.pat");
 const bootstrap = spawnSync(
-  process.execPath,
-  ["dist/server/cli.js", "token", "bootstrap", ...args],
-  { encoding: "utf8" },
+  executable,
+  [...prefix, "token", "bootstrap", ...args],
+  { ...childOptions, encoding: "utf8" },
 );
 if (bootstrap.status !== 0) throw Error(bootstrap.stderr);
 const pat = (await readFile(patFile, "utf8")).trim();
-const url = "http://127.0.0.1:18877";
+let url = native ? "" : "http://127.0.0.1:18877";
 let daemon, browser;
 async function start() {
   daemon = spawn(
-    process.execPath,
-    ["dist/server/cli.js", "serve", "--port", "18877", ...args],
-    { stdio: "ignore" },
+    executable,
+    [
+      ...prefix,
+      "serve",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      url ? new URL(url).port : "0",
+      ...args,
+    ],
+    { ...childOptions, stdio: ["ignore", "ignore", "pipe"] },
   );
+  let logs = "";
+  daemon.stderr.on("data", (data) => {
+    logs = (logs + data.toString()).slice(-10000);
+    const match = logs.match(/KVMHelm listening on (https?:\/\/[^\s]+)/);
+    if (match) url = match[1];
+  });
   for (let n = 0; n < 100; n++) {
+    if (daemon.exitCode !== null) throw Error("Test daemon stopped: " + logs);
     if (
-      await fetch(url + "/healthz")
+      url &&
+      (await fetch(url + "/healthz")
         .then((r) => r.ok)
-        .catch(() => false)
+        .catch(() => false))
     )
       return;
     await new Promise((r) => setTimeout(r, 100));
@@ -110,20 +155,23 @@ try {
         }),
     );
   if ((await colors()).length) throw Error("Colored dark-mode chrome");
-  await mkdir(".kvmhelm/qa", { recursive: true });
-  await page.screenshot({
-    path: ".kvmhelm/qa/compact-dark.png",
-    fullPage: true,
-  });
+  if (!native) {
+    await mkdir(".kvmhelm/qa", { recursive: true });
+    await page.screenshot({
+      path: ".kvmhelm/qa/compact-dark.png",
+      fullPage: true,
+    });
+  }
   await page
     .getByRole("button", { name: "Farbschema wechseln", exact: true })
     .click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   if ((await colors()).length) throw Error("Colored light-mode chrome");
-  await page.screenshot({
-    path: ".kvmhelm/qa/compact-light.png",
-    fullPage: true,
-  });
+  if (!native)
+    await page.screenshot({
+      path: ".kvmhelm/qa/compact-light.png",
+      fullPage: true,
+    });
   const top = await page
     .locator(".wall .display")
     .first()

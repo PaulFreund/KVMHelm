@@ -460,3 +460,63 @@ impl Drop for LanTransport {
         self.close();
     }
 }
+
+/// Certificate discovery sends only a TLS handshake. Trust selection happens
+/// later; no HTTP, password, cookie or authorization header is sent here.
+pub async fn inspect_certificate(address: &str) -> Result<serde_json::Value> {
+    let origin = device_origin(address)?;
+    if origin.scheme() != "https" {
+        return Err(GatewayError::new("INVALID_ADDRESS"));
+    }
+    let hostname = origin
+        .host_str()
+        .unwrap()
+        .trim_matches(['[', ']'])
+        .to_owned();
+    let port = origin.port_or_known_default().unwrap();
+    let work = async {
+        let dns = LanDns(Arc::new(SystemResolver));
+        let addresses = dns.addresses(&hostname).await?;
+        let addresses = addresses
+            .into_iter()
+            .map(|ip| SocketAddr::new(ip, port))
+            .collect::<Vec<_>>();
+        let socket = TcpStream::connect(addresses.as_slice())
+            .await
+            .map_err(|_| GatewayError::new("TLS_CERTIFICATE_ERROR"))?;
+        let config = tls_config(
+            &Tls {
+                insecure: Some(true),
+                ..Tls::default()
+            },
+            None,
+        )?;
+        let name =
+            ServerName::try_from(hostname).map_err(|_| GatewayError::new("INVALID_ADDRESS"))?;
+        let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
+            .connect(name, socket)
+            .await
+            .map_err(|_| GatewayError::new("TLS_CERTIFICATE_ERROR"))?;
+        let certificate = stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .ok_or_else(|| GatewayError::new("TLS_CERTIFICATE_ERROR"))?;
+        let fingerprint = format!("{:x}", Sha256::digest(certificate.as_ref()));
+        let (_, parsed) = x509_parser::parse_x509_certificate(certificate.as_ref())
+            .map_err(|_| GatewayError::new("TLS_CERTIFICATE_ERROR"))?;
+        let subject = parsed
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|name| name.as_str().ok())
+            .unwrap_or("");
+        Ok(
+            serde_json::json!({"fingerprint":fingerprint,"subject":subject,"valid_to":parsed.validity().not_after.to_string()}),
+        )
+    };
+    tokio::time::timeout(TIMEOUT, work)
+        .await
+        .unwrap_or_else(|_| Err(GatewayError::new("TLS_CERTIFICATE_ERROR")))
+}

@@ -7,12 +7,13 @@ use crate::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::future::BoxFuture;
+use indexmap::IndexMap;
 use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     sync::RwLock,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -107,7 +108,7 @@ struct UiSession {
 }
 #[derive(Default)]
 struct State {
-    tokens: BTreeMap<String, Token>,
+    tokens: IndexMap<String, Token>,
     uis: HashMap<String, UiSession>,
 }
 pub struct Auth {

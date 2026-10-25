@@ -18,6 +18,7 @@ use crate::{
     store::{Kind, Store},
 };
 use futures_util::{FutureExt, future::join_all};
+use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -299,7 +300,7 @@ pub struct GatewayEvent {
 }
 #[derive(Default)]
 struct State {
-    devices: BTreeMap<String, Arc<Runtime>>,
+    devices: IndexMap<String, Arc<Runtime>>,
     sessions: HashMap<String, Arc<Session>>,
     opening: HashMap<String, usize>,
     opens: HashMap<(String, String), Arc<Journal>>,
@@ -466,11 +467,14 @@ impl Core {
         let s = self.state.lock().unwrap();
         json!({"dispatch_ms":s.dispatch_ms,"batches":s.batches})
     }
-    fn failure(&self, error: GatewayError) -> ToolResult {
+    pub fn record_error(&self, code: &str) {
         let mut s = self.state.lock().unwrap();
-        if s.errors.len() < 64 || s.errors.contains_key(&error.code) {
-            *s.errors.entry(error.code.clone()).or_default() += 1;
+        if s.errors.len() < 64 || s.errors.contains_key(code) {
+            *s.errors.entry(code.into()).or_default() += 1;
         }
+    }
+    fn failure(&self, error: GatewayError) -> ToolResult {
+        self.record_error(&error.code);
         ToolResult::failure(error)
     }
     pub fn get(&self, id: &str) -> Result<Arc<Runtime>> {
@@ -1825,7 +1829,7 @@ impl Core {
         if let Some(id) = &runtime.device.device_id
             && s.devices.get(id).is_some_and(|r| Arc::ptr_eq(r, runtime))
         {
-            s.devices.remove(id);
+            s.devices.shift_remove(id);
         }
     }
     pub async fn shutdown(self: &Arc<Self>) {

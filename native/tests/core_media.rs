@@ -492,6 +492,27 @@ async fn six_native_tools_share_exclusive_control_and_identical_retries_never_se
 }
 
 #[tokio::test]
+async fn device_lists_preserve_creation_order_rather_than_sorting_uuids() {
+    let f = Fixture::new().await;
+    for (id, name) in [
+        ("ffffffff-ffff-4fff-8fff-ffffffffffff", "Z first"),
+        ("00000000-0000-4000-8000-000000000001", "A second"),
+    ] {
+        f.core.save_device(&f.a,json!({"device_id":id,"name":name,"driver_id":"fixture","transport":"simulator","media_profile":"active"}),None,None).await.unwrap();
+    }
+    assert_eq!(
+        f.core
+            .list(&f.a)
+            .unwrap()
+            .iter()
+            .map(|device| device["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Fixture", "Z first", "A second"]
+    );
+    f.close().await;
+}
+
+#[tokio::test]
 async fn a_session_id_is_not_authority_and_revocation_synchronously_closes_its_sessions() {
     let f = Fixture::new().await;
     let open = f.open("control").await;

@@ -509,6 +509,39 @@ fn pin(cert: &rcgen::Certificate) -> String {
         .join(":")
 }
 #[tokio::test]
+async fn certificate_inspection_sends_no_http_credentials_and_preserves_the_fingerprint() {
+    let f = Fixture::new(true).await;
+    let value = kvmhelm::transport::inspect_certificate(&f.address)
+        .await
+        .unwrap();
+    assert_eq!(
+        value["fingerprint"],
+        pin(f.certificate.as_ref().unwrap())
+            .replace(':', "")
+            .to_ascii_lowercase()
+    );
+    assert!(
+        value["valid_to"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
+    );
+    assert!(f.state.requests.lock().unwrap().is_empty());
+    assert_eq!(
+        kvmhelm::transport::inspect_certificate("https://8.8.8.8")
+            .await
+            .err()
+            .unwrap()
+            .code,
+        "INVALID_ADDRESS"
+    );
+    assert!(
+        kvmhelm::transport::inspect_certificate("http://127.0.0.1")
+            .await
+            .is_err()
+    );
+    f.close().await;
+}
+#[tokio::test]
 async fn tls_verifies_http_and_websocket_pins_before_credentials_including_after_rotation() {
     let f = Fixture::new(true).await;
     let wrong = Tls {

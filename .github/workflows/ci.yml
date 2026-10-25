@@ -17,12 +17,16 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets --features embedded-web -- -D warnings
+      - run: cargo test --locked --features embedded-web
       - run: cargo test --locked --test legacy_compat -- --ignored
+      - run: cargo build --locked --features embedded-web
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: node scripts/ui-layout.mjs
+      - name: Native executable with embedded Vue assets
+        shell: bash
+        run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/ui-layout.mjs
   docker:
     runs-on: ubuntu-latest
     steps:
