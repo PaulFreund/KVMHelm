@@ -25,6 +25,29 @@ struct TraceSink(Mutex<Vec<Value>>);
 
 #[test]
 #[ignore = "requires Node 24, npm dependencies and npm run build"]
+fn plugin_manifests_and_panels_match_the_actual_typescript_host() {
+    let cases: Vec<Value> = serde_json::from_str(&legacy("plugin-contracts", None)).unwrap();
+    for case in cases {
+        let parsed = if case["kind"] == "manifest" {
+            kvmhelm::plugins::schema::Manifest::parse(case["value"].clone())
+                .ok()
+                .map(|v| serde_json::to_value(v).unwrap())
+        } else {
+            kvmhelm::plugins::schema::Panel::parse(case["value"].clone())
+                .ok()
+                .map(|v| serde_json::to_value(v).unwrap())
+        };
+        assert_eq!(
+            parsed.unwrap_or(Value::Null),
+            case["parsed"],
+            "{}",
+            case["value"]
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node 24, npm dependencies and npm run build"]
 fn h264_reassembly_matches_original_loss_wrap_parameters_and_fragments() {
     use kvmhelm::drivers::h264::H264Assembler;
     let cases: Vec<Value> = serde_json::from_str(&legacy("h264", None)).unwrap();

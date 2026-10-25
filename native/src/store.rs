@@ -62,6 +62,7 @@ impl Drop for Pending {
     }
 }
 struct Inner {
+    directory: PathBuf,
     sender: Mutex<Option<SyncSender<Request>>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
     state: Arc<AtomicU8>,
@@ -77,6 +78,7 @@ pub struct Store {
 impl Store {
     pub async fn open(dir: impl AsRef<Path>) -> Result<Self> {
         let dir = dir.as_ref().to_path_buf();
+        let directory = dir.clone();
         let (sender, receiver) = mpsc::sync_channel::<Request>(MAX_PENDING);
         let (startup, ready) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(0));
@@ -123,6 +125,7 @@ impl Store {
         };
         Ok(Self {
             inner: Arc::new(Inner {
+                directory,
                 sender: Mutex::new(Some(sender)),
                 worker: Mutex::new(Some(worker)),
                 state,
@@ -139,6 +142,9 @@ impl Store {
             CLOSED => "closed",
             _ => "starting",
         }
+    }
+    pub fn directory(&self) -> &Path {
+        &self.inner.directory
     }
 
     pub fn migration_backup(&self) -> Option<&Path> {

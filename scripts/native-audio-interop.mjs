@@ -2,7 +2,15 @@
 // No actual KVM, microphone, speaker, or production state is used.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFile, chmod, mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  copyFile,
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  writeFile,
+  rm,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -31,6 +39,8 @@ const env = Object.fromEntries(
   ),
 );
 env.PATH = "";
+const pluginAudio = process.env.KVMHELM_TEST_AUDIO_PLUGIN === "1";
+if (pluginAudio) env.KVMHELM_NODE = process.execPath;
 const args = ["--data", join(dir, "data"), "--secrets", join(dir, "secrets")],
   options = { cwd: dir, env, windowsHide: true };
 let browser;
@@ -433,6 +443,38 @@ try {
   await tone(recovered);
   await stop(recovered);
   await until(() => peers.size === 0, "Recovered listener cleanup");
+  if (pluginAudio) {
+    const pluginPath = join(dir, "audio-plugin");
+    await mkdir(pluginPath);
+    await writeFile(
+      join(pluginPath, "kvmhelm.plugin.json"),
+      JSON.stringify({
+        id: "local.audio",
+        version: "1",
+        apiVersion: "kvmhelm.plugin/v1",
+        kind: "feature",
+        runtime: "external-process",
+        entry: "index.mjs",
+        permissions: ["audio:read:from_target", "ui:panel"],
+        uiSlots: ["settings.plugins"],
+      }),
+    );
+    await writeFile(
+      join(pluginPath, "index.mjs"),
+      `let device,sent=false;process.on('message',m=>{if(m.type==='initialize'){device=m.devices[0];process.send({type:'ready'});process.send({type:'subscribe',id:'pcm',source:'audio',device_id:device});}if(m.type==='health')process.send({type:'health'});if(m.type==='media'&&!sent){const c=m.chunk;if(!Buffer.isBuffer(c.data)||c.format!=='pcm_s16le'||c.sample_rate!==48000||c.channels!==2||!c.data.length||c.data.length%4||!c.data.some(v=>v!==0))return;sent=true;process.send({type:'panel',panel:{id:'pcm',title:'Audio Buffer',slot:'settings.plugins',device_id:device,text:'actual PCM Buffer'}});}if(m.type==='dispose')process.exit(0);});`,
+    );
+    await api("/plugins", "POST", {
+      path: pluginPath,
+      devices: [device.device_id],
+    });
+    await until(async () => {
+      const plugins = await api("/plugins");
+      return plugins[0].panels.some((p) => p.text === "actual PCM Buffer");
+    }, "Native plugin receives actual Janus PCM as a Buffer");
+    await api("/plugins/local.audio/disable", "POST", {});
+    await until(() => peers.size === 0, "Plugin audio consumer cleanup");
+    await api("/plugins/local.audio/uninstall", "POST", {});
+  }
   await tool("close_computer", { session_id: sid });
   browser = await chromium.launch({
     headless: true,
@@ -621,11 +663,16 @@ try {
   }
   fixture.closeAllConnections();
   if (fixture.listening) await new Promise((r) => fixture.close(r));
-  if (daemon?.exitCode === null) {
+  if (daemon?.exitCode === null && daemon.signalCode === null) {
     const ended = new Promise((r) => daemon.once("exit", r));
     daemon.kill();
     await ended;
   }
   assert.ok(resolve(dir).startsWith(resolve(tmpdir()) + sep));
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, {
+    recursive: true,
+    force: true,
+    maxRetries: 40,
+    retryDelay: 100,
+  });
 }

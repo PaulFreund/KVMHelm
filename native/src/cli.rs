@@ -244,7 +244,7 @@ pub async fn run() -> Result<()> {
     let command = args.positions.first().map(String::as_str).unwrap_or("help");
     if command == "help" {
         println!(
-            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  secrets cleanup\n  doctor\nUse --data and --secrets for separate protected storage locations. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugin runtime integration and full parity validation are still in progress; use the documented TypeScript daemon for the complete feature set."
+            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  plugin list|install <directory>|enable|disable|restart|uninstall\n  secrets cleanup\n  doctor\nUse --data and --secrets for separate protected storage locations. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugins optionally require Node (KVMHELM_NODE, beside this executable or PATH). Full API/UI/platform validation, release packaging and performance measurements remain in progress."
         );
         return Ok(());
     }
@@ -277,13 +277,49 @@ pub async fn run() -> Result<()> {
             .unwrap_or_else(|| secrets.join("cli.pat"));
         return crate::mcp_bridge::run(client.http, client.url, pat_file).await;
     }
-    if command == "doctor" || command == "device" || command == "token" && sub != "bootstrap" {
+    if command == "doctor"
+        || command == "device"
+        || command == "plugin"
+        || command == "token" && sub != "bootstrap"
+    {
         let client = Client::new(&args, &secrets)?;
         let value = match (command, sub) {
             ("doctor", _) => {
                 json!({"runtime":"rust","platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"url":client.url.as_str(),"health":client.request("/healthz",Method::GET,None).await?,"diagnostics":client.api("/diagnostics",Method::GET,None).await?})
             }
             ("device", "list") => client.api("/devices", Method::GET, None).await?,
+            ("plugin", "list") => client.api("/plugins", Method::GET, None).await?,
+            ("plugin", "install") => {
+                let path =
+                    std::path::absolute(args.positions.get(2).ok_or_else(GatewayError::invalid)?)
+                        .map_err(|_| GatewayError::invalid())?;
+                client
+                    .api(
+                        "/plugins",
+                        Method::POST,
+                        Some(json!({"path":path,"devices":args.list("device",&[])})),
+                    )
+                    .await?
+            }
+            ("plugin", "enable" | "disable" | "uninstall" | "restart") => {
+                let id = args
+                    .positions
+                    .get(2)
+                    .filter(|s| {
+                        !s.is_empty()
+                            && s.bytes().all(|b| {
+                                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')
+                            })
+                    })
+                    .ok_or_else(GatewayError::invalid)?;
+                client
+                    .api(
+                        &format!("/plugins/{id}/{sub}"),
+                        Method::POST,
+                        Some(json!({})),
+                    )
+                    .await?
+            }
             ("device", "add") => {
                 client
                     .api(

@@ -1262,7 +1262,7 @@ async fn token_scopes_and_device_configurations_reject_privilege_expansion_and_s
 }
 
 #[tokio::test]
-async fn configured_plugins_are_reported_as_unavailable_instead_of_an_empty_runtime() {
+async fn empty_plugin_inventory_and_diagnostics_work_without_the_optional_node_runtime() {
     let f = Fixture::new().await;
     for path in [
         "/api/v1/plugins",
@@ -1271,28 +1271,22 @@ async fn configured_plugins_are_reported_as_unavailable_instead_of_an_empty_runt
     ] {
         assert_eq!(f.request(path, Method::GET, None).await.status(), 200);
     }
-    f.store
-        .put(
-            Kind::Plugins,
-            "fixture",
-            json!({"id":"fixture","revision":0}),
-            0,
+    let invalid = f
+        .request(
+            "/api/v1/plugins",
+            Method::POST,
+            Some(json!({"path":"fixture","devices":[],"unexpected":true})),
         )
-        .await
-        .unwrap();
-    for path in [
-        "/api/v1/plugins",
-        "/api/v1/ui-extensions",
-        "/api/v1/diagnostics",
-    ] {
-        let response: Value = f
-            .request(path, Method::GET, None)
+        .await;
+    assert_eq!(invalid.status(), 400);
+    assert!(f.core.plugins().list().is_empty());
+    assert!(
+        f.store
+            .list::<Value>(Kind::Plugins)
             .await
-            .json()
-            .await
-            .unwrap();
-        assert_eq!(response["error"]["code"], "UNSUPPORTED_RUNTIME");
-    }
+            .unwrap()
+            .is_empty()
+    );
     f.close().await;
 }
 

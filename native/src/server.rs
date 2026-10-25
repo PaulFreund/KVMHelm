@@ -958,41 +958,67 @@ async fn dispatch(
                 }),
                 None,
             )?;
-            // An empty installed inventory has a real empty view. Configured
-            // plugins are never presented as running without their runtime.
-            if !state
-                .core
-                .store
-                .list::<Value>(Kind::Plugins)
-                .await?
-                .is_empty()
-            {
-                return Err(GatewayError::message(
-                    "UNSUPPORTED_RUNTIME",
-                    "Configured plugins require the plugin runtime, which is not yet integrated in this native build",
-                ));
+            if route[0] == "plugins" {
+                json!(state.core.plugins().list())
+            } else {
+                state.core.plugins().extensions(&identity)?
             }
-            json!([])
+        }
+        (Method::POST, ["plugins"]) => {
+            state
+                .core
+                .auth
+                .check(&identity, Some("plugins:manage"), None)?;
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                path: String,
+                devices: Vec<String>,
+            }
+            let input: Input = parse(body)?;
+            state
+                .core
+                .plugins()
+                .install(&identity, input.path, input.devices)
+                .await?
+        }
+        (Method::POST, ["plugins", id, "panels", panel, "actions"]) => {
+            state
+                .core
+                .auth
+                .check(&identity, Some("plugins:manage"), None)?;
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                action: String,
+                #[serde(default = "empty_object")]
+                values: Value,
+            }
+            fn empty_object() -> Value {
+                json!({})
+            }
+            let input: Input = parse(body)?;
+            crate::contracts::bounded_text(&input.action, 0, 64)?;
+            state
+                .core
+                .plugins()
+                .panel_action(&identity, id, panel, &input.action, input.values)
+                .await?
+        }
+        (Method::POST, ["plugins", id, op]) => {
+            state
+                .core
+                .plugins()
+                .operation(&identity, (*id).into(), (*op).into())
+                .await?
         }
         (Method::GET, ["diagnostics"]) => {
             state
                 .core
                 .auth
                 .check(&identity, Some("devices:manage"), None)?;
-            if !state
-                .core
-                .store
-                .list::<Value>(Kind::Plugins)
-                .await?
-                .is_empty()
-            {
-                return Err(GatewayError::message(
-                    "UNSUPPORTED_RUNTIME",
-                    "Configured plugins require the plugin runtime, which is not yet integrated in this native build",
-                ));
-            }
             let counters = crate::runtime::memory_and_cpu();
-            json!({"runtime":concat!("rust/",env!("CARGO_PKG_VERSION")),"platform":std::env::consts::OS,"memory":counters["memory"],"cpu_time_ms":counters["cpu_time_ms"],"metrics":state.core.metrics(),"health":state.core.health(),"devices":state.core.list(&identity)?,"plugins":[]})
+            json!({"runtime":concat!("rust/",env!("CARGO_PKG_VERSION")),"platform":std::env::consts::OS,"memory":counters["memory"],"cpu_time_ms":counters["cpu_time_ms"],"metrics":state.core.metrics(),"health":state.core.health(),"devices":state.core.list(&identity)?,"plugins":state.core.plugins().list()})
         }
         _ => return Err(GatewayError::new("NOT_FOUND")),
     };
@@ -1180,7 +1206,11 @@ fn events(
                 let data = if let Some(event) = event {
                     if core
                         .auth
-                        .check(&identity, Some("devices:read"), event.device_id.as_deref())
+                        .check(
+                            &identity,
+                            Some("devices:read"),
+                            event.device_id.as_deref().filter(|id| !id.is_empty()),
+                        )
                         .is_err()
                     {
                         continue;

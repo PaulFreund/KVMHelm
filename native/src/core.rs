@@ -28,7 +28,7 @@ use std::{
     future::Future,
     panic::AssertUnwindSafe,
     sync::{
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -323,6 +323,7 @@ pub struct Core {
     pub limits: Limits,
     pub lease_ms: u64,
     pub(crate) audio_microphones: Arc<Mutex<HashMap<String, String>>>,
+    plugins: OnceLock<Arc<crate::plugins::Host>>,
     state: Mutex<State>,
     factories: Mutex<HashMap<String, DriverFactory>>,
     configuration: DeviceQueue,
@@ -373,6 +374,7 @@ impl Core {
             limits,
             lease_ms,
             audio_microphones: Arc::new(Mutex::new(HashMap::new())),
+            plugins: OnceLock::new(),
             state: Mutex::new(State::default()),
             factories: Mutex::new(HashMap::new()),
             configuration: DeviceQueue::new(),
@@ -417,7 +419,7 @@ impl Core {
     pub fn register_factory(&self, id: &str, factory: DriverFactory) {
         self.factories.lock().unwrap().insert(id.into(), factory);
     }
-    fn event(&self, kind: &str, device: Option<&str>, data: Value) {
+    pub(crate) fn event(&self, kind: &str, device: Option<&str>, data: Value) {
         let mut log = self.events.lock().unwrap();
         log.sequence += 1;
         let event = GatewayEvent {
@@ -541,7 +543,18 @@ impl Core {
                 }
                 Ok(())
             })
-            .await
+            .await?;
+        self.plugins().load().await
+    }
+    pub fn plugins(self: &Arc<Self>) -> Arc<crate::plugins::Host> {
+        self.plugins
+            .get_or_init(|| {
+                crate::plugins::Host::new(
+                    Arc::downgrade(self),
+                    self.store.directory().join("plugins"),
+                )
+            })
+            .clone()
     }
     async fn mount(self: &Arc<Self>, device: Device) -> Result<Arc<Runtime>> {
         let id = device.device_id.clone().ok_or_else(GatewayError::invalid)?;
@@ -1886,6 +1899,9 @@ impl Core {
     pub async fn shutdown(self: &Arc<Self>) {
         self.closing.store(true, Ordering::Release);
         self.lifetime.cancel();
+        if let Some(plugins) = self.plugins.get() {
+            plugins.shutdown().await;
+        }
         self.configuration.close().await;
         let devices = self
             .state
@@ -1905,5 +1921,8 @@ impl Core {
 impl Drop for Core {
     fn drop(&mut self) {
         self.lifetime.cancel();
+        if let Some(plugins) = self.plugins.get() {
+            plugins.stop_now();
+        }
     }
 }

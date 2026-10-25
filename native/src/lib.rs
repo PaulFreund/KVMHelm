@@ -13,6 +13,7 @@ mod mcp_bridge;
 mod mcp_http;
 pub mod media;
 pub mod network;
+pub mod plugins;
 mod private_fs;
 mod queue;
 pub mod runtime;

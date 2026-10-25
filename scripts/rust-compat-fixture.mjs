@@ -25,6 +25,7 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ipKeyGenerator } from "express-rate-limit";
+import { PluginHost, manifestSchema } from "../dist/server/plugins.js";
 
 const [command, dir] = process.argv.slice(2);
 const deviceId = "11111111-1111-4111-8111-111111111111";
@@ -558,7 +559,127 @@ async function hidTranscript() {
   }
 }
 
-if (command === "rate-keys") {
+if (command === "plugin-contracts") {
+  const manifest = {
+    id: "local.fixture",
+    version: "1",
+    apiVersion: "kvmhelm.plugin/v1",
+    kind: "feature",
+    runtime: "external-process",
+    entry: "index.mjs",
+    permissions: ["ui:panel"],
+  };
+  const panel = {
+    id: "notes",
+    title: "Notes",
+    text: "Safe text",
+    slot: "kvm.sidepanel",
+  };
+  const cases = [];
+  const add = (kind, value) => cases.push({ kind, value });
+  for (const value of [
+    manifest,
+    { ...manifest, kind: "driver" },
+    { ...manifest, kind: "media" },
+    { ...manifest, id: ".." },
+    { ...manifest, extra: true },
+    { ...manifest, permissions: ["input:write"] },
+    { ...manifest, secretRefs: null },
+    { ...manifest, uiSlots: ["invalid"] },
+    { ...manifest, id: "" },
+    null,
+    [],
+  ])
+    add("manifest", value);
+  for (const value of [
+    panel,
+    { ...panel, device_id: "fixture", highlights: [{ start: 0, end: 2 }] },
+    { ...panel, title: "😀".repeat(100) },
+    { ...panel, title: "😀".repeat(101) },
+    { ...panel, highlights: [{ start: 1, end: 1 }] },
+    { ...panel, highlights: [{ start: 0.5, end: 2 }] },
+    { ...panel, device_id: null },
+    { ...panel, fields: null },
+    { ...panel, extra: true },
+    {
+      ...panel,
+      fields: [{ id: "list", label: "List", type: "string-list", value: 3 }],
+    },
+    {
+      ...panel,
+      fields: [{ id: "n", label: "N", type: "number", value: ["x"] }],
+    },
+    {
+      ...panel,
+      fields: [{ id: "bad id", label: "List", type: "string-list", value: [] }],
+    },
+    {
+      ...panel,
+      fields: [
+        {
+          id: "m",
+          label: "Multi",
+          type: "multi-select",
+          value: [],
+          options: [],
+        },
+      ],
+    },
+    {
+      ...panel,
+      fields: [
+        {
+          id: "m",
+          label: "Multi",
+          type: "multi-select",
+          value: ["de"],
+          options: [{ value: "de", label: "German" }],
+        },
+      ],
+    },
+    {
+      ...panel,
+      fields: [
+        {
+          id: "m",
+          label: "Multi",
+          type: "multi-select",
+          value: ["xx"],
+          options: [{ value: "de", label: "German" }],
+        },
+      ],
+    },
+    { ...panel, actions: [{ id: "go", label: "Go", disabled: false }] },
+    { ...panel, actions: [{ id: "go", label: "Go", disabled: null }] },
+  ])
+    add("panel", value);
+  const host = new PluginHost({ event() {} }, ".");
+  try {
+    for (let i = 0; i < cases.length; i++) {
+      const c = cases[i];
+      try {
+        if (c.kind === "manifest") c.parsed = manifestSchema.parse(c.value);
+        else {
+          const entry = {
+            id: "case" + i,
+            enabled: true,
+            manifest: { permissions: ["ui:panel"], uiSlots: ["kvm.sidepanel"] },
+            devices: ["fixture"],
+            panels: [],
+            subscriptions: new Map(),
+          };
+          await host.message(entry, { type: "panel", panel: c.value });
+          c.parsed = entry.panels[0];
+        }
+      } catch {
+        c.parsed = null;
+      }
+    }
+  } finally {
+    await host.shutdown();
+  }
+  console.log(JSON.stringify(cases));
+} else if (command === "rate-keys") {
   const values = [
     "127.0.0.1",
     "192.168.1.1",
