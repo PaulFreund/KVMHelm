@@ -26,23 +26,39 @@ import {
 import OpusScript from "opusscript";
 import { chromium, expect } from "@playwright/test";
 import { localIceOnly } from "../dist/server/lan-ice.js";
+import {
+  benchmark,
+  reference,
+  warmup,
+  phase,
+  traffic,
+  save,
+  installMeasurementPlugin,
+  normalizeBenchmarkEnvironment,
+} from "./runtime-measurements.mjs";
 
 assert.ok(process.env.KVMHELM_TEST_BINARY, "Set KVMHELM_TEST_BINARY");
-const dir = await mkdtemp(join(tmpdir(), "kvmhelm-native-audio-"));
-const executable = join(
-  dir,
-  process.platform === "win32" ? "kvmhelm.exe" : "kvmhelm",
+assert.ok(
+  !reference || benchmark,
+  "Reference fixture mode is for runtime measurements",
 );
+const dir = await mkdtemp(join(tmpdir(), "kvmhelm-native-audio-"));
+const executable = reference
+  ? resolve(process.env.KVMHELM_BENCH_NODE ?? process.execPath)
+  : join(dir, process.platform === "win32" ? "kvmhelm.exe" : "kvmhelm");
+const prefix = reference ? [resolve("dist/server/cli.js")] : [];
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([k]) => !k.toUpperCase().startsWith("KVMHELM_"),
   ),
 );
-env.PATH = "";
+if (!reference) env.PATH = "";
+if (benchmark) normalizeBenchmarkEnvironment(env);
 const pluginAudio = process.env.KVMHELM_TEST_AUDIO_PLUGIN === "1";
-if (pluginAudio) env.KVMHELM_NODE = process.execPath;
+if (pluginAudio || benchmark)
+  env.KVMHELM_NODE = process.env.KVMHELM_BENCH_NODE ?? process.execPath;
 const args = ["--data", join(dir, "data"), "--secrets", join(dir, "secrets")],
-  options = { cwd: dir, env, windowsHide: true };
+  options = { cwd: reference ? process.cwd() : dir, env, windowsHide: true };
 let browser;
 let daemon,
   gateway = "",
@@ -152,7 +168,7 @@ janus.on("connection", (socket) => {
           socket.close();
         }
         // The first unanswered probe must recover on the owned 1 s retry.
-        if (m.body?.request === "features" && attempt > 1)
+        if (m.body?.request === "features" && (attempt > 1 || benchmark))
           send({
             janus: "event",
             sender: id,
@@ -209,7 +225,9 @@ janus.on("connection", (socket) => {
               type: "offer",
               sdp:
                 peer.localDescription.sdp +
-                "a=candidate:99 1 UDP 1 8.8.8.8 9000 typ host\r\n",
+                (benchmark
+                  ? ""
+                  : "a=candidate:99 1 UDP 1 8.8.8.8 9000 typ host\r\n"),
             },
           });
           let sequence = 0;
@@ -232,11 +250,12 @@ janus.on("connection", (socket) => {
               }
             }, 20),
           );
-          send({
-            janus: "event",
-            sender: id - 1,
-            jsep: { type: "offer", sdp: "invalid stale offer" },
-          });
+          if (!benchmark)
+            send({
+              janus: "event",
+              sender: id - 1,
+              jsep: { type: "offer", sdp: "invalid stale offer" },
+            });
         }
         if (m.body?.request === "start") {
           const active = watched.find((w) => w.id === id);
@@ -329,17 +348,37 @@ async function stop(connection) {
   await closed;
 }
 try {
-  await copyFile(resolve(process.env.KVMHELM_TEST_BINARY), executable);
-  await chmod(executable, 0o700);
-  const bootstrap = spawnSync(executable, ["token", "bootstrap", ...args], {
-    ...options,
-    encoding: "utf8",
-  });
+  if (!reference)
+    await copyFile(resolve(process.env.KVMHELM_TEST_BINARY), executable);
+  if (!reference) await chmod(executable, 0o700);
+  const bootstrap = spawnSync(
+    executable,
+    [...prefix, "token", "bootstrap", ...args],
+    {
+      ...options,
+      encoding: "utf8",
+    },
+  );
   assert.equal(bootstrap.status, 0, bootstrap.stderr);
   pat = (await readFile(join(dir, "secrets", "cli.pat"), "utf8")).trim();
+  let listenPort = 0;
+  if (reference) {
+    const reservation = createServer();
+    await new Promise((r) => reservation.listen(0, "127.0.0.1", r));
+    listenPort = reservation.address().port;
+    await new Promise((r) => reservation.close(r));
+  }
   daemon = spawn(
     executable,
-    ["serve", "--host", "127.0.0.1", "--port", "0", ...args],
+    [
+      ...prefix,
+      "serve",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(listenPort),
+      ...args,
+    ],
     { ...options, stdio: ["ignore", "ignore", "pipe"] },
   );
   daemon.stderr.on("data", (chunk) => {
@@ -372,278 +411,359 @@ try {
     const devices = await api("/devices");
     return devices[0].capabilities.audio.from_target;
   }, "Probe retry recovery");
-  assert.equal(connections, 2);
+  if (!benchmark) assert.equal(connections, 2);
   assert.ok(
     (await api("/devices"))[0].capabilities.keyboard.hid,
     "audio probe failure must not break HID",
   );
-  for (let round = 0; round < 3; round++) {
-    const first = await connect(sid);
-    await tone(first);
-    const before = watched.length,
-      other = await connect(sid);
-    await tone(other);
-    assert.equal(watched.length, before, "listeners share one target peer");
-    await stop(other);
-    first.messages.length = 0;
-    await tone(first);
-    await stop(first);
-    await until(() => peers.size === 0, "Last listener detaches target peer");
-  }
-  assert.equal(watched.length, 3);
-  const microphone = await connect(sid, true);
-  await tone(microphone);
-  const mono = Buffer.alloc(1920);
-  for (let i = 0; i < 960; i++)
-    mono.writeInt16LE(
-      Math.round(10000 * Math.sin((i * 2 * Math.PI * 700) / 48000)),
-      i * 2,
-    );
-  for (let i = 0; i < 50; i++) {
-    microphone.ws.send(mono);
-    await delay(20);
-  }
-  await until(
-    () => received > 10 && nonSilent,
-    "Target receives encoded microphone tone",
-  );
-  await tool("computer_control", {
-    session_id: sid,
-    operation: "release",
-    request_id: "release",
-  });
-  await until(
-    () => microphone.ws.readyState === WebSocket.CLOSED,
-    "Control release closes microphone",
-  );
-  await delay(300);
-  const after = received;
-  await delay(200);
-  assert.equal(received, after, "no microphone media after control loss");
-  await until(() => peers.size === 0, "Control release detaches target peer");
-  const reader = await connect(sid);
-  await tone(reader);
-  await stop(reader);
-  await until(
-    () => peers.size === 0,
-    "Playback restarts after microphone stop",
-  );
-  const interrupted = await connect(sid);
-  await tone(interrupted);
-  for (const ws of janus.clients) ws.close();
-  await until(
-    () => interrupted.ws.readyState === WebSocket.CLOSED,
-    "Janus disconnect closes old listeners",
-  );
-  await until(async () => {
-    const devices = await api("/devices");
-    return connections === 3 && devices[0].capabilities.audio.from_target;
-  }, "Janus reconnect restores advertised audio");
-  const recovered = await connect(sid);
-  await tone(recovered);
-  await stop(recovered);
-  await until(() => peers.size === 0, "Recovered listener cleanup");
-  if (pluginAudio) {
-    const pluginPath = join(dir, "audio-plugin");
-    await mkdir(pluginPath);
-    await writeFile(
-      join(pluginPath, "kvmhelm.plugin.json"),
-      JSON.stringify({
-        id: "local.audio",
-        version: "1",
-        apiVersion: "kvmhelm.plugin/v1",
-        kind: "feature",
-        runtime: "external-process",
-        entry: "index.mjs",
-        permissions: ["audio:read:from_target", "ui:panel"],
-        uiSlots: ["settings.plugins"],
-      }),
-    );
-    await writeFile(
-      join(pluginPath, "index.mjs"),
-      `let device,sent=false;process.on('message',m=>{if(m.type==='initialize'){device=m.devices[0];process.send({type:'ready'});process.send({type:'subscribe',id:'pcm',source:'audio',device_id:device});}if(m.type==='health')process.send({type:'health'});if(m.type==='media'&&!sent){const c=m.chunk;if(!Buffer.isBuffer(c.data)||c.format!=='pcm_s16le'||c.sample_rate!==48000||c.channels!==2||!c.data.length||c.data.length%4||!c.data.some(v=>v!==0))return;sent=true;process.send({type:'panel',panel:{id:'pcm',title:'Audio Buffer',slot:'settings.plugins',device_id:device,text:'actual PCM Buffer'}});}if(m.type==='dispose')process.exit(0);});`,
-    );
-    await api("/plugins", "POST", {
-      path: pluginPath,
-      devices: [device.device_id],
-    });
-    await until(async () => {
-      const plugins = await api("/plugins");
-      return plugins[0].panels.some((p) => p.text === "actual PCM Buffer");
-    }, "Native plugin receives actual Janus PCM as a Buffer");
-    await api("/plugins/local.audio/disable", "POST", {});
-    await until(() => peers.size === 0, "Plugin audio consumer cleanup");
-    await api("/plugins/local.audio/uninstall", "POST", {});
-  }
-  await tool("close_computer", { session_id: sid });
-  browser = await chromium.launch({
-    headless: true,
-    args: ["--mute-audio", "--autoplay-policy=no-user-gesture-required"],
-  });
-  const page = await browser.newPage();
-  const pageErrors = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.addInitScript(() => {
-    // Exercise the existing Vue microphone UI with a generated stream. Never
-    // delegate to the browser's physical capture implementation.
-    Object.defineProperty(navigator.mediaDevices, "enumerateDevices", {
-      value: async () => [],
-    });
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
-      value: async () => {
-        const context = new AudioContext({ sampleRate: 48000 }),
-          oscillator = context.createOscillator(),
-          destination = context.createMediaStreamDestination();
-        oscillator.frequency.value = 700;
-        oscillator.connect(destination);
-        oscillator.start();
-        await context.resume();
-        const stream = destination.stream,
-          track = stream.getAudioTracks()[0],
-          stop = track.stop.bind(track);
-        track.stop = () => {
-          stop();
-          void context.close();
+  if (benchmark) {
+    await tool("close_computer", { session_id: sid });
+    const reports = [];
+    for (const name of ["audio_receive", "audio_microphone", "audio_plugin"]) {
+      const state = await tool("open_computer", {
+        computer_id: device.device_id,
+        mode: "control",
+        request_id: name,
+      });
+      const session = state.session.session_id;
+      const connection = await connect(session, name === "audio_microphone");
+      await tone(connection);
+      const mono = Buffer.alloc(1920);
+      for (let i = 0; i < 960; i++)
+        mono.writeInt16LE(
+          Math.round(10000 * Math.sin((i * 2 * Math.PI * 700) / 48000)),
+          i * 2,
+        );
+      const before = received;
+      const timer =
+        name === "audio_microphone"
+          ? setInterval(() => connection.ws.send(mono), 20)
+          : undefined;
+      try {
+        if (name === "audio_plugin")
+          await installMeasurementPlugin(
+            api,
+            join(dir, "audio-measurement-plugin"),
+            device.device_id,
+            "audio",
+          );
+        const runTool = (name, args) => api("/tools/" + name, "POST", args);
+        const warm = await traffic({
+          tool: runTool,
+          session,
+          frame: state.frames[0],
+          ms: warmup * 1000 || 1,
+          images: false,
+        });
+        const report = await phase(name, daemon.pid, (ms) =>
+          traffic({
+            tool: runTool,
+            session,
+            frame: warm.frame,
+            ms,
+            images: false,
+          }),
+        );
+        if (name === "audio_microphone")
+          assert.ok(
+            received > before + 10 && nonSilent,
+            "Synthetic microphone must arrive as decoded non-silent Opus",
+          );
+        report.fixture = {
+          microphone_packets_after_activation: received - before,
+          pcm_blocks_retained_at_end: connection.messages.filter(
+            Buffer.isBuffer,
+          ).length,
         };
-        return stream;
+        reports.push(report);
+      } finally {
+        clearInterval(timer);
+        await stop(connection);
+        if (name === "audio_plugin")
+          await api("/plugins/benchmark.observer/uninstall", "POST", {});
+        await tool("close_computer", { session_id: session });
+      }
+    }
+    await save({
+      scenario_group: "audio",
+      fixture: {
+        sample_rate: 48000,
+        received_channels: 2,
+        microphone_channels: 1,
+        packet_ms: 20,
+        source: "generated 1 kHz/700 Hz tones; no capture device",
       },
+      reports,
     });
-  });
-  await page.goto(gateway + "/computers");
-  await page.getByLabel("Personal Access Token").fill(pat);
-  await page.getByRole("button", { name: "Anmelden →", exact: true }).click();
-  await page.getByRole("button", { name: "Ziel hören", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Ton ausschalten", exact: true }),
-  ).toBeVisible();
-  await expect
-    .poll(() => page.getByLabel("Zielaudiopegel").evaluate((el) => el.value))
-    .toBeGreaterThan(0);
-  await page
-    .getByRole("button", { name: "Steuerung übernehmen", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Steuerung freigeben", exact: true }),
-  ).toBeVisible();
-  const beforeUiMic = received;
-  await page
-    .getByRole("button", { name: "Mikrofon einschalten", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "● Mikrofon ausschalten", exact: true }),
-  ).toBeVisible();
-  await until(
-    () => received > beforeUiMic + 5,
-    "Existing Vue UI transmits synthetic microphone",
-  );
-  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-  await expect(
-    page.getByRole("button", { name: "Mikrofon einschalten", exact: true }),
-  ).toBeVisible();
-  await until(
-    () => watched.at(-1)?.mic === false,
-    "Focus loss keeps playback while stopping microphone",
-  );
-  await page.getByLabel("Mikrofonmodus").selectOption("hold");
-  const hold = page.getByRole("button", {
-    name: "Zum Sprechen halten",
-    exact: true,
-  });
-  const box = await hold.boundingBox();
-  assert.ok(box);
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  const beforeHold = received;
-  await page.mouse.down();
-  try {
-    await expect(
-      page.getByRole("button", {
-        name: "● Loslassen zum Stummschalten",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await until(
-      () => received > beforeHold + 3,
-      "Vue push-to-talk sends while held",
-    );
-  } finally {
-    await page.mouse.up();
-  }
-  await expect(hold).toBeVisible();
-  await until(
-    () => watched.at(-1)?.mic === false,
-    "Push-to-talk release stops microphone",
-  );
-  await expect(
-    page.getByRole("button", { name: "Ton ausschalten", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Ton ausschalten", exact: true })
-    .click();
-  await page.close();
-  await browser.close();
-  browser = undefined;
-  await until(() => peers.size === 0, "Vue disposal stops target audio");
-  assert.deepEqual(pageErrors, []);
-  await api("/devices/" + device.device_id, "DELETE", {
-    revision: device.revision,
-    confirmed: true,
-  });
-  await until(
-    () => janus.clients.size === 0 && hid.clients.size === 0,
-    "Driver disposal closes owned signaling",
-  );
-  // The explicit Comet adapters retain their manufacturer/model identity and
-  // delegate only the actually supported GL-KVMD/Janus audio protocol.
-  for (const model of ["GL-RM1", "GL-RM10"]) {
-    const comet = await api("/devices", "POST", {
-      device: {
-        name: "Synthetic " + model,
-        driver_id: "glinet-comet",
-        model,
-        address: `http://127.0.0.1:${fixture.address().port}`,
-        media_profile: "warm",
-        minimum_action_latency_ms: 0,
-      },
-      secret: { username: "fixture", password: "audio-only" },
-    });
-    const state = await tool("open_computer", {
-      computer_id: comet.device_id,
-      mode: "control",
-      request_id: "open-" + model,
-    });
-    await until(async () => {
-      const devices = await api("/devices");
-      const caps = devices[0].capabilities;
-      return (
-        caps.audio.from_target &&
-        caps.audio.to_target &&
-        caps.extensions.model === model
+  } else {
+    for (let round = 0; round < 3; round++) {
+      const first = await connect(sid);
+      await tone(first);
+      const before = watched.length,
+        other = await connect(sid);
+      await tone(other);
+      assert.equal(watched.length, before, "listeners share one target peer");
+      await stop(other);
+      first.messages.length = 0;
+      await tone(first);
+      await stop(first);
+      await until(() => peers.size === 0, "Last listener detaches target peer");
+    }
+    assert.equal(watched.length, 3);
+    const microphone = await connect(sid, true);
+    await tone(microphone);
+    const mono = Buffer.alloc(1920);
+    for (let i = 0; i < 960; i++)
+      mono.writeInt16LE(
+        Math.round(10000 * Math.sin((i * 2 * Math.PI * 700) / 48000)),
+        i * 2,
       );
-    }, model + " feature response");
-    const channel = await connect(state.session.session_id, true);
-    await tone(channel);
-    const before = received;
-    for (let i = 0; i < 15; i++) {
-      channel.ws.send(mono);
+    for (let i = 0; i < 50; i++) {
+      microphone.ws.send(mono);
       await delay(20);
     }
-    await until(() => received > before + 3, model + " microphone tone");
-    await stop(channel);
-    await until(() => peers.size === 0, model + " audio stop");
-    await tool("close_computer", { session_id: state.session.session_id });
-    await api("/devices/" + comet.device_id, "DELETE", {
-      revision: comet.revision,
+    await until(
+      () => received > 10 && nonSilent,
+      "Target receives encoded microphone tone",
+    );
+    await tool("computer_control", {
+      session_id: sid,
+      operation: "release",
+      request_id: "release",
+    });
+    await until(
+      () => microphone.ws.readyState === WebSocket.CLOSED,
+      "Control release closes microphone",
+    );
+    await delay(300);
+    const after = received;
+    await delay(200);
+    assert.equal(received, after, "no microphone media after control loss");
+    await until(() => peers.size === 0, "Control release detaches target peer");
+    const reader = await connect(sid);
+    await tone(reader);
+    await stop(reader);
+    await until(
+      () => peers.size === 0,
+      "Playback restarts after microphone stop",
+    );
+    const interrupted = await connect(sid);
+    await tone(interrupted);
+    for (const ws of janus.clients) ws.close();
+    await until(
+      () => interrupted.ws.readyState === WebSocket.CLOSED,
+      "Janus disconnect closes old listeners",
+    );
+    await until(async () => {
+      const devices = await api("/devices");
+      return connections === 3 && devices[0].capabilities.audio.from_target;
+    }, "Janus reconnect restores advertised audio");
+    const recovered = await connect(sid);
+    await tone(recovered);
+    await stop(recovered);
+    await until(() => peers.size === 0, "Recovered listener cleanup");
+    if (pluginAudio) {
+      const pluginPath = join(dir, "audio-plugin");
+      await mkdir(pluginPath);
+      await writeFile(
+        join(pluginPath, "kvmhelm.plugin.json"),
+        JSON.stringify({
+          id: "local.audio",
+          version: "1",
+          apiVersion: "kvmhelm.plugin/v1",
+          kind: "feature",
+          runtime: "external-process",
+          entry: "index.mjs",
+          permissions: ["audio:read:from_target", "ui:panel"],
+          uiSlots: ["settings.plugins"],
+        }),
+      );
+      await writeFile(
+        join(pluginPath, "index.mjs"),
+        `let device,sent=false;process.on('message',m=>{if(m.type==='initialize'){device=m.devices[0];process.send({type:'ready'});process.send({type:'subscribe',id:'pcm',source:'audio',device_id:device});}if(m.type==='health')process.send({type:'health'});if(m.type==='media'&&!sent){const c=m.chunk;if(!Buffer.isBuffer(c.data)||c.format!=='pcm_s16le'||c.sample_rate!==48000||c.channels!==2||!c.data.length||c.data.length%4||!c.data.some(v=>v!==0))return;sent=true;process.send({type:'panel',panel:{id:'pcm',title:'Audio Buffer',slot:'settings.plugins',device_id:device,text:'actual PCM Buffer'}});}if(m.type==='dispose')process.exit(0);});`,
+      );
+      await api("/plugins", "POST", {
+        path: pluginPath,
+        devices: [device.device_id],
+      });
+      await until(async () => {
+        const plugins = await api("/plugins");
+        return plugins[0].panels.some((p) => p.text === "actual PCM Buffer");
+      }, "Native plugin receives actual Janus PCM as a Buffer");
+      await api("/plugins/local.audio/disable", "POST", {});
+      await until(() => peers.size === 0, "Plugin audio consumer cleanup");
+      await api("/plugins/local.audio/uninstall", "POST", {});
+    }
+    await tool("close_computer", { session_id: sid });
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--mute-audio", "--autoplay-policy=no-user-gesture-required"],
+    });
+    const page = await browser.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.addInitScript(() => {
+      // Exercise the existing Vue microphone UI with a generated stream. Never
+      // delegate to the browser's physical capture implementation.
+      Object.defineProperty(navigator.mediaDevices, "enumerateDevices", {
+        value: async () => [],
+      });
+      Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+        value: async () => {
+          const context = new AudioContext({ sampleRate: 48000 }),
+            oscillator = context.createOscillator(),
+            destination = context.createMediaStreamDestination();
+          oscillator.frequency.value = 700;
+          oscillator.connect(destination);
+          oscillator.start();
+          await context.resume();
+          const stream = destination.stream,
+            track = stream.getAudioTracks()[0],
+            stop = track.stop.bind(track);
+          track.stop = () => {
+            stop();
+            void context.close();
+          };
+          return stream;
+        },
+      });
+    });
+    await page.goto(gateway + "/computers");
+    await page.getByLabel("Personal Access Token").fill(pat);
+    await page.getByRole("button", { name: "Anmelden →", exact: true }).click();
+    await page.getByRole("button", { name: "Ziel hören", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Ton ausschalten", exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() => page.getByLabel("Zielaudiopegel").evaluate((el) => el.value))
+      .toBeGreaterThan(0);
+    await page
+      .getByRole("button", { name: "Steuerung übernehmen", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Steuerung freigeben", exact: true }),
+    ).toBeVisible();
+    const beforeUiMic = received;
+    await page
+      .getByRole("button", { name: "Mikrofon einschalten", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "● Mikrofon ausschalten", exact: true }),
+    ).toBeVisible();
+    await until(
+      () => received > beforeUiMic + 5,
+      "Existing Vue UI transmits synthetic microphone",
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(
+      page.getByRole("button", { name: "Mikrofon einschalten", exact: true }),
+    ).toBeVisible();
+    await until(
+      () => watched.at(-1)?.mic === false,
+      "Focus loss keeps playback while stopping microphone",
+    );
+    await page.getByLabel("Mikrofonmodus").selectOption("hold");
+    const hold = page.getByRole("button", {
+      name: "Zum Sprechen halten",
+      exact: true,
+    });
+    const box = await hold.boundingBox();
+    assert.ok(box);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const beforeHold = received;
+    await page.mouse.down();
+    try {
+      await expect(
+        page.getByRole("button", {
+          name: "● Loslassen zum Stummschalten",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await until(
+        () => received > beforeHold + 3,
+        "Vue push-to-talk sends while held",
+      );
+    } finally {
+      await page.mouse.up();
+    }
+    await expect(hold).toBeVisible();
+    await until(
+      () => watched.at(-1)?.mic === false,
+      "Push-to-talk release stops microphone",
+    );
+    await expect(
+      page.getByRole("button", { name: "Ton ausschalten", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Ton ausschalten", exact: true })
+      .click();
+    await page.close();
+    await browser.close();
+    browser = undefined;
+    await until(() => peers.size === 0, "Vue disposal stops target audio");
+    assert.deepEqual(pageErrors, []);
+    await api("/devices/" + device.device_id, "DELETE", {
+      revision: device.revision,
       confirmed: true,
     });
     await until(
       () => janus.clients.size === 0 && hid.clients.size === 0,
-      model + " disposal",
+      "Driver disposal closes owned signaling",
+    );
+    // The explicit Comet adapters retain their manufacturer/model identity and
+    // delegate only the actually supported GL-KVMD/Janus audio protocol.
+    for (const model of ["GL-RM1", "GL-RM10"]) {
+      const comet = await api("/devices", "POST", {
+        device: {
+          name: "Synthetic " + model,
+          driver_id: "glinet-comet",
+          model,
+          address: `http://127.0.0.1:${fixture.address().port}`,
+          media_profile: "warm",
+          minimum_action_latency_ms: 0,
+        },
+        secret: { username: "fixture", password: "audio-only" },
+      });
+      const state = await tool("open_computer", {
+        computer_id: comet.device_id,
+        mode: "control",
+        request_id: "open-" + model,
+      });
+      await until(async () => {
+        const devices = await api("/devices");
+        const caps = devices[0].capabilities;
+        return (
+          caps.audio.from_target &&
+          caps.audio.to_target &&
+          caps.extensions.model === model
+        );
+      }, model + " feature response");
+      const channel = await connect(state.session.session_id, true);
+      await tone(channel);
+      const before = received;
+      for (let i = 0; i < 15; i++) {
+        channel.ws.send(mono);
+        await delay(20);
+      }
+      await until(() => received > before + 3, model + " microphone tone");
+      await stop(channel);
+      await until(() => peers.size === 0, model + " audio stop");
+      await tool("close_computer", { session_id: state.session.session_id });
+      await api("/devices/" + comet.device_id, "DELETE", {
+        revision: comet.revision,
+        confirmed: true,
+      });
+      await until(
+        () => janus.clients.size === 0 && hid.clients.size === 0,
+        model + " disposal",
+      );
+    }
+    assert.deepEqual(errors, []);
+    console.log(
+      "Native audio: empty PATH, Janus probe retry, fresh handles, shared listeners, stereo Opus decode, mono microphone encode, existing Vue audio/microphone UI, control/focus loss and complete cleanup passed",
     );
   }
-  assert.deepEqual(errors, []);
-  console.log(
-    "Native audio: empty PATH, Janus probe retry, fresh handles, shared listeners, stereo Opus decode, mono microphone encode, existing Vue audio/microphone UI, control/focus loss and complete cleanup passed",
-  );
 } finally {
   await browser?.close();
   if (gateway && daemon?.exitCode === null)

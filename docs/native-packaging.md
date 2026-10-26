@@ -195,7 +195,14 @@ Am 26.10.2026 auf ENVY (Windows x64, Rust 1.99.1) bestanden:
   und XML-Lesen der launchd-Vorlage. Das ist kein nativer Linux-Daemonlauf
   beziehungsweise kein launchd-Lauf.
 
+Der separate [Windows-Laufzeitvergleich](native-performance.md) ist mit dem
+sauberen Full-Paket aus `24ae930` ausgeführt: 36 Lastfenster gegen die
+unveränderte TypeScript-Referenz, einschließlich FFmpeg, Broker und Plugins.
+Er dokumentiert niedrigeren Arbeitssatz/Commit und unter aktiver Last weniger
+Prozess-CPU in den erfassten Fällen; die Latenz verbessert sich nicht durchgehend.
+Versionen, Hashes, Hostlast und die kurzen synthetischen Lastgrenzen sind angegeben.
+
 Linux/macOS-Laufzeit, SCM/systemd/launchd, Container und physische Geräte
-werden getrennt vom lokalen Windows-Prozessbetrieb ausgewiesen. Repräsentative
-RAM-/CPU-/Latenzmessungen einschließlich FFmpeg, Broker und Pluginprozessen
-gegen die TypeScript-Referenz bleiben vor Abschluss erforderlich.
+bleiben getrennt vom lokalen Windows-Prozessbetrieb offen. Der gemessene
+Zwischenstand ändert weder eine vorhandene Installation noch den bisherigen
+`npm start`-Referenzpfad.
