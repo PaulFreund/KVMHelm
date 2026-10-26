@@ -320,7 +320,13 @@ export function useComputer(
   watch(
     () => device().lease?.session_id,
     (id, old) => {
-      if (old === session.value?.session_id && id !== old) loseControl();
+      if (
+        !rotating.value &&
+        session.value &&
+        old === session.value.session_id &&
+        id !== old
+      )
+        loseControl();
     },
   );
   onMounted(() => {

@@ -163,6 +163,18 @@ try {
   if (!reference)
     await page.route("**/api/v1/tools/open_computer", async (route) => {
       if (!sleeping) return route.continue();
+      if (route.request().postDataJSON().mode === "observe")
+        return route.fulfill({
+          json: {
+            isError: true,
+            content: [],
+            structuredContent: {
+              ok: false,
+              frames: [],
+              error: { code: "NO_SIGNAL", message: "Sleeping fixture" },
+            },
+          },
+        });
       const response = await route.fetch();
       const body = await response.json();
       body.content = body.content.filter((item) => item.type !== "image");
@@ -211,7 +223,15 @@ try {
     await expect(page.locator(".empty-display")).toContainText(
       "Sleeping fixture",
     );
+    const opened = page.waitForRequest(
+      (r) =>
+        r.url().endsWith("/tools/open_computer") &&
+        r.postDataJSON().mode === "control",
+    );
     await acquire.click();
+    const opening = (await opened).postDataJSON();
+    assert.equal(opening.wake, undefined);
+    assert.ok(opening.request_id);
     const blank = page.getByRole("group", {
       name: "KVM-Bildschirm Desktop fixture",
       exact: true,
