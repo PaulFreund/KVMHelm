@@ -66,10 +66,10 @@ OPTIONS-Antworten sowie den Offlinebefehl `demo` ohne Pluginstart.
 Daemons und CLIs; die drei zusätzlichen Rust-Tests prüfen Inhaltslänge,
 Readiness, Berechtigungen, getrennte Ratenlimits und Streambereinigung.
 
-Rustfmt, Clippy mit `-D warnings` und die regulären nativen Tests bestehen
-einschließlich der Aufweckkorrekturen aus `972e028` unter Windows (121 Tests)
-und Linux (120 Tests), dazu
-jeweils alle zehn direkten Vergleiche gegen das Original.
+Der Zwischenstand `972e028` bestand Rustfmt, Clippy mit `-D warnings`, die
+regulären nativen Tests unter Windows (121) und Linux (120) sowie jeweils alle
+zehn direkten Vergleiche gegen das Original. Die anschließende Korrektur der
+Bedienung ohne Video ist im folgenden Abschnitt getrennt ausgewiesen.
 
 ## Nacharbeit am realen PiKVM
 
@@ -79,37 +79,68 @@ Auch der direkte Bildabruf über den Originaltransport scheitert damit. Ohne
 ersten Frame scheiterte bisher die Sessionöffnung und der Web-Kontrollknopf
 blieb deaktiviert.
 
-`f4f76cc` ergänzt den bedienbaren Webknopf und das ausdrücklich angeforderte
-`open_computer(..., wake=true)`; `972e028` erlaubt den festen Shift-Impuls auch
-bei schlafendem KVMD-HID. Beliebige Eingaben behalten ihre Bildreferenz- und
-Capabilityprüfung. Exklusive Lease, Not-Stopp, Queue und Open-Journal gelten
-auch beim Aufwecken; ein identischer Retry sendet keine weitere Taste. Die
-[Betriebsbeschreibung](rust-port.md#schlafende-ziele-aufwecken) nennt Grenzen
-und Fehlerbereinigung. Ein bereits geöffneter Browser muss die neuen Assets
-durch Neuladen laden.
+Die Zwischenstände `f4f76cc`/`972e028` versuchten einen festen Shift-Aufweckpfad,
+verlangten danach aber weiterhin ein Bild. Der Nutzer stellte klar, dass
+normale Maus-/Tastatureingaben nach Kontrollübernahme auch ohne Video möglich
+sein müssen. `01e8496` entfernt deshalb diesen Sonderpfad samt `wake`-Option.
+Session und Kontrolle bleiben bei fehlendem Video verfügbar; der Bildfehler
+wird getrennt gemeldet. Normale HID-Eingaben sind auch bei offline gemeldetem
+KVMD-USB-Host möglich. Die Oberfläche verwendet normalisierte Mauskoordinaten
+und eine Referenz auf Verbindung und Inputrevision. Bestehende MCP-Aufrufe mit
+Bildreferenz behalten ihre vollständigen Prüfungen. Kein Bild wird erfunden,
+und Kontrollübernahme löst keinen automatischen Aufweck-Tastendruck aus.
 
-Der ausdrücklich gewünschte reale Agenttest lief mit `gpt-6.1-sol`,
-Reasoning `medium`, über Streamable HTTP. Er reproduzierte erst den Bildfehler,
-dann die zusätzliche Offline-HID-Prüfung. Nach deren Korrektur wird der
-Aufweckaufruf am Debugbinary aus `972e028` angenommen, aber weiterhin kein Bild
-geliefert (`FRAME_TIMEOUT`). Der zusätzliche lesende Agentlauf am installierten
-Release desselben Commits bestätigt `NO_SIGNAL`, ohne weitere Eingaben.
-Die Wiederholung mit derselben Request-ID bleibt ohne erneuten Tastendruck;
-die eigene Session, Medienverbraucher und Kontrolllease sind danach freigegeben.
-`list_computers` und `open_computer` wurden real aufgerufen. Die vier weiteren
-Tools benötigen eine gültige Session/Bildreferenz; Paint/Notepad wurden mangels
-Bild nicht bedient. Das ist weiterhin kein erfolgreicher Hardware-Bedienungsnachweis.
+`65f1e97` behebt zusätzlich die im Browser reproduzierte Kontrollübernahme mit
+einer nach Gerätebearbeitung geschlossenen Session: Nur beim ausdrücklich
+bestätigten `SESSION_LOST` wird eine neue Kontrollsession geöffnet. Ungewisse
+Eingaben und Verbindungsfehler werden nicht wiederholt. Die
+[Betriebsbeschreibung](rust-port.md#steuerung-ohne-videobild) erklärt beide
+Referenzarten, Vorprüfung, Lease und Request-Journal. Ein bereits geöffneter
+Browser muss die neuen Assets durch Neuladen laden.
 
-Das geprüfte Windows-Full-Release aus `972e028` läuft auf Nutzerwunsch mit den
-vorhandenen Daten/Secrets; eine private Sicherung wurde vor dem Austausch
-erstellt. Prüfsummen, Readiness, Web und Anmeldung über Loopback und geprüftes
-LAN-TLS sowie der separate MCP-HTTP/stdio-Check des Releasebinaries bestehen.
-Die erfolgreiche reale Bedienung wartet auf eine verfügbare Bildquelle und
-den Vergleich mit der eigenen PiKVM-Weboberfläche. Die aktuelle PiKVM-USB-
-Aufweckkonfiguration ist nicht festgestellt; die
-[PiKVM-Dokumentation](https://docs.pikvm.org/blog/2021/08/31/kvmd-3-23-keyboard-mouse-wakeup/)
-beschreibt dafür eine eigene Geräteoption. Diese Nacharbeit ist kein neuer
-Ressourcenmesslauf und keine neue macOS-/Dienst-/Containerabnahme.
+`0bf98d2` verhindert außerdem, dass die eigene Freigabe während der
+Journalrotation den nächsten Auftrag abbricht oder eine eintreffende Lease
+ohne bisherige Session als Kontrollverlust gilt. Die Browserprüfung beginnt
+ausdrücklich ohne Session und ohne Bild und erzwingt später einen bestätigten
+Sessionverlust vor der Kontrollübernahme.
+
+Für den nativen Kern aus `01e8496` bestehen unter Windows Rustfmt, Clippy mit
+`-D warnings`, alle 122 regulären Tests und zehn direkte Originalvergleiche.
+Die neuen Tests prüfen Eingaben ohne Anfangsbild, beide Video-Fehlerklassen,
+offline gemeldetes HID bei PiKVM und beiden Comet-Modellen, Kontrollrechte,
+Arbitrierung, vollständige Vorprüfung, Replay und unbekannte Zustellung.
+Zurückkehrendes Video unterbricht normalisierte Eingaben nicht. Der separate
+MCP-HTTP-/stdio-Test besteht mit kopiertem Binary und leerem PATH. Der
+vollständige Browsercheck aus `0bf98d2` besteht einschließlich der ersten
+Kontrollübernahme ohne Session/Bild, ungewisser Eingabe ohne Replay,
+bestätigtem Sessionverlust und Journalrotation. `e963980` macht dabei die
+Sessionverlust-Fixture eindeutig: Sie wartet zunächst auf eine tatsächlich
+bestehende Session und bestätigt, dass der injizierte Fehler verbraucht wurde.
+Diese letzte Änderung betrifft ausschließlich die Prüfung.
+
+Unter Ubuntu 24.04/WSL2 bestehen mit UID/GID 65534 ebenfalls Rustfmt, Clippy
+mit `-D warnings`, Vue-Build, alle 121 regulären nativen Tests, zehn direkte
+Originalvergleiche sowie der vollständige Browser- und MCP-HTTP-/stdio-Check.
+Der dort geprüfte native und Web-Code entspricht `0bf98d2`; die abschließende
+Browser-Fixture entspricht `e963980`.
+
+Der erneute reale Agentlauf mit `gpt-6.1-sol`, Reasoning `medium`, über
+Streamable HTTP am Debugbinary aus `0bf98d2` hat alle sechs Tools aufgerufen
+(19 Aufrufe, Thread `01a1786f-b303-7502-a30c-187d8e349514`). Beobachtungssession
+und Kontrollübernahme funktionieren ohne Bild. Eine gewöhnliche Shift-Eingabe
+und eine getrennte Mausbewegung nach normalisierten `(16384,16384)` wurden
+jeweils als `sent` gemeldet. Zehn Sekunden weitere Bildabrufe erhielten weiter
+`NO_SIGNAL`/`FRAME_TIMEOUT`. Der Agent gab Kontrolle und eigene Session frei.
+Ein `sent` beweist die Übertragung im Gateway, nicht den Empfang durch das
+Zielbetriebssystem oder eine sichtbare Wirkung. PIN, Paint und Notepad wurden
+ohne Bild nicht verwendet; die visuelle Hardwareabnahme ist weiter offen.
+
+Der Testdaemon wurde mit vorhandenen Daten/Secrets nach privater Sicherung
+aktualisiert. Loopback und LAN-TLS, Readiness, Web und Anmeldung bestehen;
+ein bereits geöffneter Browser benötigt neue Assets durch Neuladen. Der
+abschließende Windows-Releasebau wird nach seinem tatsächlichen Ergebnis
+ergänzt. Diese Nacharbeit ist kein neuer Ressourcenmesslauf und
+keine neue macOS-/Dienst-/Containerabnahme.
 
 ## Laufzeitmessung
 
@@ -140,8 +171,9 @@ exklusiven Host belegen keine Langzeit- oder Hardwareleistung.
   Daemon in einer transienten Unit geprüft.
 - Container: Dockerfile, Compose und Prüfjob vorhanden; Build/Lauf auf ENVY
   und WSL mangels Engine nicht ausgeführt.
-- Am physischen PiKVM wurde der Aufweck-/Bildpfad versucht; die erfolgreiche
-  Bedienung bleibt wegen fehlenden Signals offen. Comet-, JetKVM-, Audio- und
+- Am physischen PiKVM wurden alle sechs MCP-Tools aufgerufen und normale
+  Tastatur-/Mauseingaben ohne Video als `sent` gemeldet. Sichtbare Wirkung und
+  Bedienung von Paint/Notepad bleiben ohne Signal offen. Comet-, JetKVM-, Audio- und
   Mikrofonpfade sind weiterhin ausschließlich mit synthetischen Gegenstellen geprüft.
 - Linuxnachweise gelten für Ubuntu 24.04/WSL2 x64; das gebaute Paket verlangt
   GLIBC_2.39. Keine Linux-/macOS-Ressourcenmessung. Höhere Auflösungen,

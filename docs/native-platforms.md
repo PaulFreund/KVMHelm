@@ -182,24 +182,33 @@ Abnahme anderer Distributionen, Architekturen oder realer Geräte.
 
 ## Nacharbeit: schlafender realer PiKVM-Host
 
-Die Ergänzung aus `f4f76cc`/`972e028` behebt den ohne Anfangsbild deaktivierten
-Kontrollknopf und ergänzt einen ausdrücklich angeforderten, geleasten
-Aufweckimpuls. Die neue Browserprüfung beginnt ohne Session und Bild; die
-Treiberprüfung bildet offline gemeldetes HID für PiKVM und beide Comet-Modelle
-nach. Details und die unveränderten Referenz-/Eingabeguards stehen in der
+Der Aufweck-Sonderpfad aus `f4f76cc`/`972e028` wurde auf Nutzerhinweis durch
+normale Steuerung ohne Videobild ersetzt. `01e8496` behält Sessions trotz
+fehlendem Bild und ergänzt verbindungsbezogene Eingabereferenzen;
+`65f1e97`/`0bf98d2` korrigieren bestätigten Sessionverlust und die eigene
+Journalrotation in der Oberfläche. Bildbezogene MCP-Aufrufe behalten ihre
+bisherigen Prüfungen. Details stehen in der
 [Reviewvorlage](native-review.md#nacharbeit-am-realen-pikvm).
 
-Für `972e028` bestehen Rustfmt, Clippy mit `-D warnings`, alle 121 regulären nativen
-Windows- beziehungsweise 120 Linux-Tests und je zehn direkte Vergleiche gegen
-die Originalimplementierung. Vue-Build, die vier Browser-Queue-Tests und der
-ergänzte Browser-/MCP-HTTP/stdio-Integrationspfad bestehen ebenfalls. Der
-Windows-Releasecheck läuft mit kopiertem Binary und leerem PATH; die Linux-
-Läufe verwenden weiterhin die isolierte Arbeitskopie mit UID/GID 65534.
+Für den geänderten Kern bestehen unter Windows Rustfmt, Clippy mit
+`-D warnings`, 122 reguläre Tests und zehn direkte Vergleiche gegen die
+Originalimplementierung. Die neuen Treibertests bilden offline gemeldetes HID
+für PiKVM und beide Comet-Modelle nach. Vue-Build und die vier Browser-Queue-
+Tests bestehen. Der Browsercheck prüft zusätzlich Eingaben ohne Anfangsbild,
+unbekannten Ausgang ohne Replay und Kontrollübernahme nach Sessionverlust;
+der MCP-HTTP-/stdio-Check verwendet kopierte Binaries mit leerem PATH.
 
-Das Windows-Full-Release von `972e028` ist gebaut, paketiert, per Prüfsummen
-geprüft und mit bestehenden Testdaten gestartet. Der reale MCP-Agentlauf
-(`gpt-6.1-sol`, `medium`) bleibt trotz angenommenem Aufweckaufruf ohne Bild;
-KVMD 4.16 meldet weiterhin HDMI/HID offline. Damit sind weder die erfolgreiche
-Bedienung von Paint/Notepad noch eine vollständige reale Prüfung aller sechs
-MCP-Tools belegt. Die zuvor genannten synthetischen Protokoll- und Plattform-
-prüfungen ersetzen diese noch ausstehende Bedienungsabnahme nicht.
+Die erneute Linuxprüfung unter Ubuntu 24.04/WSL2 als UID/GID 65534 besteht:
+Rustfmt, Clippy mit `-D warnings`, Vue-Build, 121 reguläre native Tests, zehn
+Originalvergleiche sowie vollständige Browser- und MCP-HTTP-/stdio-Interop.
+Der native und Web-Code entspricht `0bf98d2`; die in `e963980` präzisierte
+Sessionverlust-Fixture besteht unter Windows und Linux. Die früheren
+Linux-Releasepakete wurden in dieser Nacharbeit nicht neu gebaut.
+
+Der reale Agentlauf (`gpt-6.1-sol`, `medium`) am Debugbinary aus `0bf98d2`
+öffnet Session und Kontrolle ohne Bild und meldet normale Shift-Eingabe sowie
+eine getrennte Mausbewegung als `sent`. Alle sechs MCP-Tools wurden aufgerufen;
+der Bildabruf scheitert weiterhin mit `NO_SIGNAL`/`FRAME_TIMEOUT`. Kontrolle
+und eigene Session wurden freigegeben. Ohne Bild sind sichtbare Wirkung,
+Entsperren und Paint/Notepad nicht bestätigt. Synthetische Protokoll- und
+Plattformprüfungen ersetzen diesen ausstehenden Bedienungsnachweis nicht.
