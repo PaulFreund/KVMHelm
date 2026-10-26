@@ -137,9 +137,11 @@ aller beobachteten Daemon-/Broker-/Pluginprozesse. `systemd-run --wait`
 kontrolliert den tatsächlichen Exitstatus; `--collect` räumt die transiente
 Unit auf. Die CI enthält denselben opt-in Lauf für ihren Linux-Runner.
 
-## Aktueller Nachweis
+## Plattform- und Paketnachweise
 
-Am 26.10.2026 bestanden auf ENVY:
+Am 26.10.2026 bestanden auf ENVY im zuerst geprüften Paketierungsstand die
+folgenden Nachweise. Die anschließende Aufwecknacharbeit steht im letzten
+Abschnitt dieser Seite.
 
 | Umgebung                                | Ausgeführter Nachweis                                                                                                                                                                                                 | Getrennt offen                                                                         |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -177,3 +179,27 @@ Docker/Podman beziehungsweise ein Engine-Socket sind auf ENVY und in der
 geprüften WSL-Umgebung nicht verfügbar. Der Containerbau/-lauf bleibt separat
 offen. WSL2-Ergebnisse gelten für diese Linux-Umgebung und ersetzen keine
 Abnahme anderer Distributionen, Architekturen oder realer Geräte.
+
+## Nacharbeit: schlafender realer PiKVM-Host
+
+Die Ergänzung aus `f4f76cc`/`972e028` behebt den ohne Anfangsbild deaktivierten
+Kontrollknopf und ergänzt einen ausdrücklich angeforderten, geleasten
+Aufweckimpuls. Die neue Browserprüfung beginnt ohne Session und Bild; die
+Treiberprüfung bildet offline gemeldetes HID für PiKVM und beide Comet-Modelle
+nach. Details und die unveränderten Referenz-/Eingabeguards stehen in der
+[Reviewvorlage](native-review.md#nacharbeit-am-realen-pikvm).
+
+Für `972e028` bestehen Rustfmt, Clippy mit `-D warnings`, alle 121 regulären nativen
+Windows- beziehungsweise 120 Linux-Tests und je zehn direkte Vergleiche gegen
+die Originalimplementierung. Vue-Build, die vier Browser-Queue-Tests und der
+ergänzte Browser-/MCP-HTTP/stdio-Integrationspfad bestehen ebenfalls. Der
+Windows-Releasecheck läuft mit kopiertem Binary und leerem PATH; die Linux-
+Läufe verwenden weiterhin die isolierte Arbeitskopie mit UID/GID 65534.
+
+Das Windows-Full-Release von `972e028` ist gebaut, paketiert, per Prüfsummen
+geprüft und mit bestehenden Testdaten gestartet. Der reale MCP-Agentlauf
+(`gpt-6.1-sol`, `medium`) bleibt trotz angenommenem Aufweckaufruf ohne Bild;
+KVMD 4.16 meldet weiterhin HDMI/HID offline. Damit sind weder die erfolgreiche
+Bedienung von Paint/Notepad noch eine vollständige reale Prüfung aller sechs
+MCP-Tools belegt. Die zuvor genannten synthetischen Protokoll- und Plattform-
+prüfungen ersetzen diese noch ausstehende Bedienungsabnahme nicht.

@@ -2,7 +2,7 @@
 
 Die Portierung wird auf `port/task-0126-rust` umgesetzt. Referenz ist der unveränderte TypeScript-/Vue-Stand `b40b2dde246533a25a18148a6b59faced676d9ba`. Der native Code liegt unter `native/src`, mit `Cargo.toml`, gepinntem Toolchainstand und `Cargo.lock` im Repositorywurzelverzeichnis.
 
-Der integrierte Stand enthält einen nativen HTTP-/MCP-Daemon und eine CLI mit stdio-Bridge und eingebetteter vorhandener Vue-Oberfläche. Persistenz, Secrets, Autorisierung, Core, geteilte Medien, Simulator sowie HID-/Bildadapter für PiKVM, beide Comet-Modelle und JetKVM sind integriert. Janus-Zielaudio und Mikrofon, JetKVM-Zielaudio sowie der vorhandene Audio-WebSocket-/Vue-Pfad laufen ebenfalls nativ. Alle sechs Computer-Tools verwenden über REST, Streamable HTTP und stdio dieselben nativen Sessions, Leases, Gerätequeues und Request-Journale. Die vorhandenen Pluginfunktionen sind über einen optionalen Node-IPC-Adapter integriert; die API-/UI-Pfade sind gegen lokale Gegenstellen geprüft; weitere Plattform-/Hardwareabnahmen bleiben getrennt offen. Die [Reviewvorlage](native-review.md) bündelt Ergebnis, Nachweise und Restgrenzen für die Nutzerabnahme. Eine bestehende Installation wurde nicht umgestellt.
+Der integrierte Stand enthält einen nativen HTTP-/MCP-Daemon und eine CLI mit stdio-Bridge und eingebetteter vorhandener Vue-Oberfläche. Persistenz, Secrets, Autorisierung, Core, geteilte Medien, Simulator sowie HID-/Bildadapter für PiKVM, beide Comet-Modelle und JetKVM sind integriert. Janus-Zielaudio und Mikrofon, JetKVM-Zielaudio sowie der vorhandene Audio-WebSocket-/Vue-Pfad laufen ebenfalls nativ. Alle sechs Computer-Tools verwenden über REST, Streamable HTTP und stdio dieselben nativen Sessions, Leases, Gerätequeues und Request-Journale. Die vorhandenen Pluginfunktionen sind über einen optionalen Node-IPC-Adapter integriert; die API-/UI-Pfade sind gegen lokale Gegenstellen geprüft; weitere Plattform-/Hardwareabnahmen bleiben getrennt offen. Die [Reviewvorlage](native-review.md) bündelt Ergebnis, Nachweise und Restgrenzen für die Nutzerabnahme. Der vorhandene Testdaemon auf ENVY wurde inzwischen auf ausdrücklichen Nutzerwunsch mit vorhandenen Daten und Secrets gestartet und vor dem Austausch privat gesichert.
 
 Der normale Quellcheckout startet jetzt ausschließlich Rust: `npm run build`
 baut Vue, `npm run build:native` das Releasebinary; `npm start` und
@@ -22,7 +22,7 @@ ausschließlich Testgegenstellen und dem Browserbuild.
 
 ## Schlafende Ziele aufwecken
 
-Ohne Bild bleibt eine normale Beobachtungsanfrage ohne Eingabewirkung. Die
+Normale Beobachtungsanfragen senden keinen Aufweck-Tastendruck. Die
 Weboberfläche bietet dann ausdrücklich **Aufwecken / Steuerung übernehmen** an.
 Über MCP/REST ist derselbe Vorgang eine additive Option des vorhandenen Tools:
 
@@ -47,6 +47,11 @@ trennen. Firmware ohne lesbaren Streamerstatus behält den begrenzten
 Snapshot-Warmup. Alle bisherigen Toolnamen und Aufrufe bleiben erhalten;
 der Originalvergleich prüft ausschließlich diese additive Schema-/Hilfetext-
 Erweiterung gesondert und alle übrigen Metadaten unverändert.
+
+Ob der Host den HID-Impuls tatsächlich zum Aufwachen nutzt, hängt auch von
+seiner USB-/PiKVM-Konfiguration ab. Der reale MCP-Agenttest und die noch
+fehlende erfolgreiche Bedienung sind in der [Reviewvorlage](native-review.md#nacharbeit-am-realen-pikvm)
+getrennt von den synthetischen Nachweisen beschrieben.
 
 ## Funktionszuordnung
 
@@ -362,6 +367,6 @@ Der [Windows-Laufzeitvergleich](native-performance.md) ist ausgeführt: neun Sze
 
 Linux x64 ist zusätzlich unter Ubuntu 24.04/WSL2 ausgeführt: 111 reguläre native Tests, zehn tatsächliche TypeScript-Vergleiche, optimiertes Full-Paket mit Migration/SIGTERM, native MCP-/stdio-Wiederanläufe, JetKVM/FFmpeg, Janus-/Vue-/Plugin-Audio, Plugin-Lifecycle und Vue-Verwaltungs-/Touchabnahme bestehen. Die Tests und Paket-/Interopläufe bestehen auch als UID/GID 65534. Ein tatsächlicher transienter systemd-Lauf prüft mit demselben unprivilegierten Account die paketierten Härtungspolicies, Start/Restart/Stop, erhaltene Konfiguration, freigegebene Sessions und Helferende. Die Unix-Dateisicherheit prüft gesetzte Modi jetzt durch Readback: Der zusätzliche negative Test weist einen Mount ab, der chmod annimmt, aber 0777 beibehält, bevor ein Masterkey veröffentlicht wird. Details einschließlich GLIBC_2.39-Buildgrenze und getrennten Dienst-/Hostgrenzen stehen in [Native Plattformabnahme](native-platforms.md).
 
-macOS und physische PiKVM-/JetKVM-/Comet-Geräte wurden noch nicht ausgeführt. HID, Video und Audio sind ausschließlich gegen lokale synthetische Gegenstellen geprüft. Die kurzen Windows-Messfenster auf einem nicht exklusiven Host sind keine Langzeit-, Hardware- oder anderen Plattformnachweise; Linux wurde funktional geprüft, ohne daraus Linux-Ressourcenwerte abzuleiten.
+macOS ist weiterhin nicht ausgeführt. Am physischen PiKVM wurde der MCP-Aufweck-/Bildpfad versucht; HDMI/HID bleiben offline und eine erfolgreiche Bedienung ist noch nicht belegt. JetKVM-, Comet-, Audio- und Mikrofonpfade sind ausschließlich gegen lokale synthetische Gegenstellen geprüft. Die kurzen Windows-Messfenster auf einem nicht exklusiven Host sind keine Langzeit-, Hardware- oder anderen Plattformnachweise; Linux wurde funktional geprüft, ohne daraus Linux-Ressourcenwerte abzuleiten.
 
 Die Releasepaketierung, isolierte Migrationsprüfung und Zusammenführung der Betriebswege auf Rust sind implementiert; Details und getrennte Plattformgrenzen stehen in [Native Pakete und Betrieb](native-packaging.md). Das ersetzte produktive TypeScript-Backend und seine npm-Laufzeitabhängigkeiten sind entfernt; die tatsächliche Originalreferenz bleibt ausschließlich in ignorierter Testablage verfügbar. Weitere Zielhost-/Dienst-/Containerprüfungen bleiben getrennt offen. Höhere Videoauflösungen, längere Last und gezielte kleine Antwortzeiten auf einem ruhigen Host brauchen eigene Profile.
