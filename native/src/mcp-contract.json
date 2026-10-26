@@ -16,7 +16,7 @@
       "listChanged": true
     }
   },
-  "instructions": "Use list_computers, then open_computer. Observe, act in short batches, observe again. Coordinates are pixels in the returned image. Copy frame_id, view_id and input_revision from the latest frame into computer.reference. After acquiring control separately, get a new screenshot. Use a new request_id per operation; reuse it only for an identical retry. Never blindly repeat uncertain input. Close sessions when finished. When the user asks to see the screen or a visual result, explicitly display the returned image in your user-visible response using your client's supported image attachment/rendering mechanism. An image in a tool result may be visible only to you. Forward the actual image content; do not replace it with a description or invent a URL. If your client cannot display it, say so; never claim an image is shown unless you included it. Do not upload screenshots to an external service merely to display them.",
+  "instructions": "Use list_computers, then open_computer. Observe, act in short batches, observe again. Coordinates are pixels in the returned image. Copy frame_id, view_id and input_revision from the latest frame into computer.reference. After acquiring control separately, get a new screenshot. Control also works without video: copy control_reference into computer.reference, without adding frame_id; mouse coordinates then range from 0 to 32767 on each axis. Use observation.mode=none when no image is available. Opening or acquiring control never sends input. Use a new request_id per operation; reuse it only for an identical retry. Never blindly repeat uncertain input. Close sessions when finished. When the user asks to see the screen or a visual result, explicitly display the returned image in your user-visible response using your client's supported image attachment/rendering mechanism. An image in a tool result may be visible only to you. Forward the actual image content; do not replace it with a description or invent a URL. If your client cannot display it, say so; never claim an image is shown unless you included it. Do not upload screenshots to an external service merely to display them.",
   "tools": [
     {
       "name": "list_computers",
@@ -64,7 +64,7 @@
     },
     {
       "name": "open_computer",
-      "description": "Open an observe or exclusive control session and get its screen; control requires request_id. With explicit user permission to wake a sleeping target, set wake=true in control mode: only if there is no screen, send one fixed Shift tap under the exclusive lease and wait for a fresh image. Reuse the same request_id on retry; never automatically resend an uncertain wake with a new ID. When the user asks to see the screen or a visual result, explicitly display the returned image in your user-visible response using your client's supported image attachment/rendering mechanism. An image in a tool result may be visible only to you. Forward the actual image content; do not replace it with a description or invent a URL. If your client cannot display it, say so; never claim an image is shown unless you included it. Do not upload screenshots to an external service merely to display them.",
+      "description": "Open an observe or exclusive control session and get its screen; control requires request_id. The session remains usable when video_error reports NO_SIGNAL or FRAME_TIMEOUT and no image is returned. Use its control_reference for keyboard and mouse input without video. Opening never sends a wake key or other input. When the user asks to see the screen or a visual result, explicitly display the returned image in your user-visible response using your client's supported image attachment/rendering mechanism. An image in a tool result may be visible only to you. Forward the actual image content; do not replace it with a description or invent a URL. If your client cannot display it, say so; never claim an image is shown unless you included it. Do not upload screenshots to an external service merely to display them.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -77,9 +77,6 @@
               "observe",
               "control"
             ]
-          },
-          "wake": {
-            "type": "boolean"
           },
           "request_id": {
             "type": "string",
@@ -133,7 +130,7 @@
     },
     {
       "name": "computer",
-      "description": "Run ordered actions; return the screen by default. The device applies a minimum delay after the last input before observing (default 30 ms); later observations do not restart it. Use wait(duration_ms) between actions when needed. On timing failures increase the relevant wait by 50 ms until visually stable; after 5 verified successes reduce by 25 ms toward 0. If a lower value fails, restore the last stable value and retry lowering after 5 successes. Sent/ACK is not visual success. Never replay uncertain input automatically.",
+      "description": "Run ordered actions; return the screen by default. A reference with frame_id uses image pixels and requires that fresh frame. Alternatively copy the latest control_reference returned by open_computer, computer_control or computer; omit frame_id and use normalized mouse coordinates 0..32767 on each axis. This supports ordinary HID input without video, including a sleeping PiKVM reporting HID offline. Use observation.mode=none to send input without waiting for an image. The device applies a minimum delay after the last input before observing (default 30 ms); later observations do not restart it. Use wait(duration_ms) between actions when needed. On timing failures increase the relevant wait by 50 ms until visually stable; after 5 verified successes reduce by 25 ms toward 0. If a lower value fails, restore the last stable value and retry lowering after 5 successes. Sent/ACK is not visual success. Never replay uncertain input automatically.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -161,7 +158,6 @@
               }
             },
             "required": [
-              "frame_id",
               "view_id",
               "input_revision"
             ],

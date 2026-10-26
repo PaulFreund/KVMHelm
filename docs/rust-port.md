@@ -20,38 +20,45 @@ alten Produktionsserver zurück. Keine npm-Abhängigkeit ist für den nativen
 Corebetrieb erforderlich; SDK/WebRTC/Bildbibliotheken im npm-Devgraph dienen
 ausschließlich Testgegenstellen und dem Browserbuild.
 
-## Schlafende Ziele aufwecken
+## Steuerung ohne Videobild
 
-Normale Beobachtungsanfragen senden keinen Aufweck-Tastendruck. Die
-Weboberfläche bietet dann ausdrücklich **Aufwecken / Steuerung übernehmen** an.
-Über MCP/REST ist derselbe Vorgang eine additive Option des vorhandenen Tools:
+**Steuerung übernehmen** erteilt die exklusive Kontrolle auch ohne Videobild.
+Sessionöffnung und Kontrollübernahme senden selbst keine Eingabe. Normale
+Maus-, Tastatur- und Texteingaben funktionieren anschließend unabhängig vom
+Bildabruf. PiKVMs offline gemeldeter USB-Host ist kein Beleg dafür, dass der
+Adapter HID nicht unterstützt; Eingaben bleiben über die bestehende Verbindung
+möglich. Fehlendes HDMI trennt den HID-Kanal nicht.
+
+`open_computer` behält eine erfolgreiche Session, wenn der Bildabruf
+`NO_SIGNAL` oder `FRAME_TIMEOUT` liefert. Dann enthält das Ergebnis
+`video_error`, keine erfundenen Bilder und eine `control_reference`. Die
+gleichen Referenzen werden bei Kontrolloperationen und nach Eingabebatches
+zurückgegeben. Über MCP/REST kann ein Client diese Referenz unverändert in
+`computer.reference` übernehmen, ohne `frame_id` hinzuzufügen:
 
 ```json
-{"computer_id":"<id>","mode":"control","wake":true,"request_id":"<eindeutige-id>"}
+{"session_id":"<session>","request_id":"<eindeutige-id>","reference":{"view_id":"<control_reference.view_id>","input_revision":1},"actions":[{"type":"keypress","keys":["ENTER"]}],"observation":{"mode":"none"}}
 ```
 
-Nur wenn der erste Bildabruf `NO_SIGNAL` oder `FRAME_TIMEOUT` liefert, sendet
-der Core einmal Shift drücken/loslassen. Der Vorgang benötigt Eingaberechte,
-eine exklusive Kontrolllease und die serielle Gerätequeue; Not-Stopp und
-Kontrollgeneration gelten auch dabei. Danach wartet er bis zu acht Sekunden
-auf ein frisches Bild. Bei einem bereits verfügbaren Bild wird keine Taste
-gesendet. `wake=true` ist im Beobachtungsmodus ungültig. Beliebige weitere
-Eingaben benötigen weiterhin ihre aktuelle Bildreferenz.
+Die vollständige aktuelle `control_reference` kopieren, einschließlich ihrer
+Inputrevision. Ohne `frame_id` verwenden Mauskoordinaten auf beiden Achsen
+den Bereich 0 bis 32767. Die Weboberfläche bildet die Bild- beziehungsweise
+leere Bildschirmfläche darauf ab. Videoauflösungswechsel unterbrechen diesen
+Eingabepfad nicht; ein Verbindungswechsel macht die Referenz ungültig.
 
-Für einen Wiederholungsaufruf muss dieselbe `request_id` verwendet werden;
-das Open-Journal sendet den Aufweckimpuls dabei nicht erneut. Bei unbekannter
-Zustellung keine neue Aufweckanfrage automatisch erzeugen. Kehrt kein Bild
-zurück, wird die Session samt Lease bereinigt. PiKVM-HTTP 503 mit explizit
-offline gemeldeter HDMI-Quelle ergibt `NO_SIGNAL`, ohne den HID-Kanal zu
-trennen. Firmware ohne lesbaren Streamerstatus behält den begrenzten
-Snapshot-Warmup. Alle bisherigen Toolnamen und Aufrufe bleiben erhalten;
-der Originalvergleich prüft ausschließlich diese additive Schema-/Hilfetext-
-Erweiterung gesondert und alle übrigen Metadaten unverändert.
+Bestehende MCP-Aufrufe mit `frame_id`, `view_id` und `input_revision` bleiben
+unverändert bildbezogen: Pixelkoordinaten, aktuelle Ansicht, passende Revision
+und die bisherige Altersgrenze werden geprüft. Exklusive Lease, Berechtigungen,
+Not-Stopp, Vorprüfung, serielle Gerätequeue und Request-Journal gelten für
+beide Pfade. Identische Wiederholungen senden keine Eingabe erneut. Der
+Originalvergleich weist die optionale `frame_id` und die ergänzten Hilfetexte
+gesondert aus; alle übrigen Metadaten bleiben gleich.
 
-Ob der Host den HID-Impuls tatsächlich zum Aufwachen nutzt, hängt auch von
-seiner USB-/PiKVM-Konfiguration ab. Der reale MCP-Agenttest und die noch
-fehlende erfolgreiche Bedienung sind in der [Reviewvorlage](native-review.md#nacharbeit-am-realen-pikvm)
-getrennt von den synthetischen Nachweisen beschrieben.
+Diese Nacharbeit folgt der am 26.10.2026 ausdrücklich beschriebenen Bedienung
+ohne Video. Der zuvor versuchte feste Aufweck-Sonderpfad samt `wake`-Option
+ist entfernt. Ob der Zielrechner durch normale Eingaben tatsächlich aufwacht,
+ist von deren erfolgreicher Übertragung und von der sichtbaren
+Hardwareabnahme zu unterscheiden; siehe [Reviewvorlage](native-review.md#nacharbeit-am-realen-pikvm).
 
 ## Funktionszuordnung
 

@@ -76,27 +76,20 @@ async function takeControl() {
   if (control.value) focusTarget();
 }
 function coords(e: MouseEvent | WheelEvent) {
-  const b = image.value!.getBoundingClientRect(),
-    f = frame.value!;
+  const b = (image.value ?? viewport.value)!.getBoundingClientRect();
   return {
     x: Math.max(
       0,
-      Math.min(
-        f.width - 1,
-        Math.floor(((e.clientX - b.left) / b.width) * f.width),
-      ),
+      Math.min(32767, Math.floor(((e.clientX - b.left) / b.width) * 32768)),
     ),
     y: Math.max(
       0,
-      Math.min(
-        f.height - 1,
-        Math.floor(((e.clientY - b.top) / b.height) * f.height),
-      ),
+      Math.min(32767, Math.floor(((e.clientY - b.top) / b.height) * 32768)),
     ),
   };
 }
 function down(e: PointerEvent) {
-  if (!control.value || !frame.value || pointer !== undefined) return;
+  if (!control.value || pointer !== undefined) return;
   e.preventDefault();
   focusTarget();
   pointer = e.pointerId;
@@ -105,7 +98,7 @@ function down(e: PointerEvent) {
   drag = [coords(e)];
 }
 function move(e: PointerEvent) {
-  if (!control.value || !frame.value) return;
+  if (!control.value) return;
   const p = coords(e);
   if (pointer === e.pointerId && drag.length) {
     if (Math.abs(p.x - drag[0].x) + Math.abs(p.y - drag[0].y) > 4) moved = true;
@@ -116,8 +109,7 @@ function move(e: PointerEvent) {
   }
 }
 function up(e: PointerEvent) {
-  if (pointer !== e.pointerId || !drag.length || !control.value || !frame.value)
-    return;
+  if (pointer !== e.pointerId || !drag.length || !control.value) return;
   const path = drag,
     p = coords(e);
   drag = [];
@@ -133,7 +125,7 @@ function up(e: PointerEvent) {
     ]);
 }
 function click(e: MouseEvent) {
-  if (!control.value || !frame.value || moved) return;
+  if (!control.value || moved) return;
   const p = coords(e);
   clearTimeout(clickTimer);
   if (e.detail === 2 && pendingClick) {
@@ -152,10 +144,14 @@ function click(e: MouseEvent) {
   }
 }
 function wheel(e: WheelEvent) {
-  if (!control.value || !frame.value) return;
+  if (!control.value) return;
   e.preventDefault();
   const scale =
-    e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? frame.value.height : 1;
+    e.deltaMode === 1
+      ? 16
+      : e.deltaMode === 2
+        ? (frame.value?.height ?? 720)
+        : 1;
   const clamp = (n: number) =>
     Math.max(-1000, Math.min(1000, Math.round(n * scale)));
   void send([
@@ -332,9 +328,7 @@ onBeforeUnmount(() => {
             ? "Bitte warten …"
             : control
               ? "Steuerung freigeben"
-              : !session
-                ? "Aufwecken / Steuerung übernehmen"
-                : "Steuerung übernehmen"
+              : "Steuerung übernehmen"
         }}</Button
       >
       <Button
@@ -467,6 +461,12 @@ onBeforeUnmount(() => {
         control && $event.data && send([{ type: 'type', text: $event.data }])
       "
       @contextmenu.prevent
+      @pointerdown="down"
+      @pointermove="move"
+      @pointerup="up"
+      @pointercancel="cancelPointer"
+      @click="click"
+      @wheel="wheel"
     >
       <img
         v-if="source"
@@ -474,18 +474,12 @@ onBeforeUnmount(() => {
         :src="source"
         :alt="'Livebild ' + device.name"
         draggable="false"
-        @pointerdown="down"
-        @pointermove="move"
-        @pointerup="up"
-        @pointercancel="cancelPointer"
-        @click="click"
-        @wheel="wheel"
       />
       <div v-else class="empty-display">
-        {{ error || "Verbindung wird aufgebaut …" }}
+        {{ error || frameError || "Verbindung wird aufgebaut …" }}
       </div>
       <span v-if="frameError" class="frame-error"
-        >{{ frameError }} · Bild möglicherweise veraltet</span
+        >{{ frameError }}{{ source ? " · Bild möglicherweise veraltet" : "" }}</span
       >
       <span v-if="device.driver_id === 'simulator'" class="simulated"
         >SIMULATOR</span
@@ -510,7 +504,7 @@ onBeforeUnmount(() => {
       <div class="control-hint">
         {{
           control
-            ? "Klick ins Bild aktiviert Tastatur und Maus. Strg + Alt + Esc gibt den Tastaturfokus frei."
+            ? "Klick in die Bildschirmfläche aktiviert Tastatur und Maus. Strg + Alt + Esc gibt den Tastaturfokus frei."
             : "Steuerung übernehmen, um Tastatur, Maus und Mikrofon zu verwenden."
         }}
       </div>

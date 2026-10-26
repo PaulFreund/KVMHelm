@@ -240,6 +240,16 @@ pub struct Runtime {
     lifetime: CancellationToken,
 }
 impl Runtime {
+    fn control_view(&self, generation: u64) -> String {
+        format!(
+            "control:{}:{generation}",
+            self.device.device_id.as_deref().unwrap_or_default()
+        )
+    }
+    fn control_reference(&self) -> Value {
+        let (_, generation, revision) = self.media.identity();
+        json!({"view_id":self.control_view(generation),"input_revision":revision})
+    }
     pub fn lease(&self) -> Option<Lease> {
         self.state.lock().unwrap().lease.clone()
     }
@@ -1502,7 +1512,9 @@ impl Core {
                                 }
                             }
                         }
-                        Ok(ToolResult::ok(json!({"lease":r.lease()})))
+                        Ok(ToolResult::ok(
+                            json!({"lease":r.lease(),"control_reference":r.control_reference()}),
+                        ))
                     }
                     ToolRequest::Computer(args) => core.batch(&identity, &session, &r, args).await,
                     _ => unreachable!(),
@@ -1593,53 +1605,25 @@ impl Core {
                     false,
                 )
                 .await;
-            let image = match image {
-                Err(error)
-                    if args.wake == Some(true)
-                        && matches!(error.code.as_str(), "NO_SIGNAL" | "FRAME_TIMEOUT") =>
-                {
-                    let core = self.clone();
-                    let wake_identity = identity.clone();
-                    let s = session.clone();
-                    let r = runtime.clone();
-                    let woke = self
-                        .scheduled(&runtime, Arc::new(Flight::new()), async move {
-                            core.wake(&wake_identity, &s, &r).await?;
-                            Ok(ToolResult::ok(json!({})))
-                        })
-                        .await;
-                    if !woke.success() {
-                        return Ok(woke);
-                    }
-                    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
-                    loop {
-                        self.assert_control(identity, &session, &runtime, None)?;
-                        match self
-                            .observe(
-                                identity,
-                                &session,
-                                Duration::ZERO,
-                                deadline.saturating_duration_since(tokio::time::Instant::now()),
-                                true,
-                            )
-                            .await
-                        {
-                            Ok(image) => break image,
-                            Err(error)
-                                if matches!(error.code.as_str(), "NO_SIGNAL" | "FRAME_TIMEOUT")
-                                    && tokio::time::Instant::now() < deadline =>
-                            {
-                                tokio::time::sleep(Duration::from_millis(100)).await;
-                            }
-                            Err(error) => return Err(error),
-                        }
-                    }
+            self.session(identity, &session.session_id)?;
+            if args.mode == Mode::Control {
+                self.assert_control(identity, &session, &runtime, None)?;
+            }
+            let mut result = ToolResult::ok(json!({
+                "session":session.view(),"lease":runtime.lease(),
+                "control_reference":runtime.control_reference()
+            }));
+            match image {
+                Ok(image) => result.images.push(image),
+                Err(error) if matches!(error.code.as_str(), "NO_SIGNAL" | "FRAME_TIMEOUT") => {
+                    // Video availability does not determine HID authority.
+                    // Preserve the session without manufacturing an image.
+                    result
+                        .body
+                        .insert("video_error".into(), serde_json::to_value(error).unwrap());
                 }
-                result => result?,
-            };
-            let mut result =
-                ToolResult::ok(json!({"session":session.view(),"lease":runtime.lease()}));
-            result.images.push(image);
+                Err(error) => return Err(error),
+            }
             Ok(result)
         }
         .await;
@@ -1647,54 +1631,6 @@ impl Core {
             self.close_session(&session.session_id).await;
         }
         work
-    }
-    // The sole input allowed before a frame is an explicitly requested, fixed
-    // modifier tap. It uses the device queue, exclusive lease and open journal;
-    // ordinary actions still require their complete current frame reference.
-    async fn wake(
-        self: &Arc<Self>,
-        identity: &Identity,
-        session: &Arc<Session>,
-        runtime: &Arc<Runtime>,
-    ) -> Result<()> {
-        self.assert_control(identity, session, runtime, None)?;
-        let cancellation = runtime.lifetime.child_token();
-        let generation = {
-            let mut state = runtime.state.lock().unwrap();
-            state.abort = Some(cancellation.clone());
-            state.generation
-        };
-        let context = {
-            let core = self.clone();
-            let identity = identity.clone();
-            let session = session.clone();
-            let runtime = runtime.clone();
-            ActionContext {
-                cancellation: cancellation.clone(),
-                width: 0,
-                height: 0,
-                assert_control: Arc::new(move || {
-                    core.assert_control(&identity, &session, &runtime, Some(generation))
-                }),
-            }
-        };
-        let result = async {
-            context.check()?;
-            runtime.media.bump_input_revision();
-            let _completed = InputFinished(runtime.clone());
-            tokio::select! {biased;
-                _=cancellation.cancelled()=>Err(GatewayError::new("LEASE_REVOKED")),
-                result=tokio::time::timeout(Duration::from_secs(5), AssertUnwindSafe(runtime.driver.wake(&context)).catch_unwind())=>match result {
-                    Ok(Ok(result))=>result.map(|_|()), Ok(Err(_))|Err(_)=>Err(unknown())
-                }
-            }
-        }.await;
-        if result.is_err() && !Self::release_driver(runtime).await {
-            runtime.state.lock().unwrap().suspended = true;
-        }
-        runtime.state.lock().unwrap().abort = None;
-        result?;
-        context.check()
     }
     async fn batch(
         self: &Arc<Self>,
@@ -1705,31 +1641,43 @@ impl Core {
     ) -> Result<ToolResult> {
         self.assert_control(identity, session, runtime, None)?;
         self.connect(runtime).await?;
-        let reference = session
-            .state
-            .lock()
-            .unwrap()
-            .references
-            .iter()
-            .find(|f| f.frame_id == args.reference.frame_id)
-            .cloned()
-            .ok_or_else(|| GatewayError::new("VIEW_CHANGED"))?;
         let (view, generation, revision) = runtime.media.identity();
-        if reference.view_id != args.reference.view_id
-            || reference.view_id != view
-            || reference.connection_generation != generation
-        {
+        let expected_view = if args.reference.frame_id.is_some() {
+            view.clone()
+        } else {
+            runtime.control_view(generation)
+        };
+        if args.reference.view_id != expected_view {
             return Err(GatewayError::new("VIEW_CHANGED"));
         }
-        if args.reference.input_revision != revision
-            || reference.input_revision != revision
-            || monotonic_ms() - reference.received_at_monotonic_ms > 30_000.0
-        {
+        let (width, height) = if let Some(frame_id) = &args.reference.frame_id {
+            let reference = session
+                .state
+                .lock()
+                .unwrap()
+                .references
+                .iter()
+                .find(|f| &f.frame_id == frame_id)
+                .cloned()
+                .ok_or_else(|| GatewayError::new("VIEW_CHANGED"))?;
+            if reference.view_id != view || reference.connection_generation != generation {
+                return Err(GatewayError::new("VIEW_CHANGED"));
+            }
+            if reference.input_revision != revision
+                || monotonic_ms() - reference.received_at_monotonic_ms > 30_000.0
+            {
+                return Err(GatewayError::new("STALE_REFERENCE"));
+            }
+            (reference.width, reference.height)
+        } else {
+            // A control reference uses normalized absolute HID coordinates.
+            // It names the live view and revision, without claiming a frame.
+            (32768, 32768)
+        };
+        if args.reference.input_revision != revision {
             return Err(GatewayError::new("STALE_REFERENCE"));
         }
-        runtime
-            .driver
-            .validate(&args.actions, reference.width, reference.height)?;
+        runtime.driver.validate(&args.actions, width, height)?;
         let observe = args
             .observation
             .as_ref()
@@ -1773,14 +1721,21 @@ impl Core {
             let identity = identity.clone();
             let session = session.clone();
             let runtime = runtime.clone();
-            let view = reference.view_id.clone();
+            let view = args.reference.view_id.clone();
+            let frame_referenced = args.reference.frame_id.is_some();
             ActionContext {
                 cancellation: cancellation.clone(),
-                width: reference.width,
-                height: reference.height,
+                width,
+                height,
                 assert_control: Arc::new(move || {
                     core.assert_control(&identity, &session, &runtime, Some(generation))?;
-                    if runtime.media.identity().0 != view {
+                    let (image_view, connection, _) = runtime.media.identity();
+                    let current_view = if frame_referenced {
+                        image_view
+                    } else {
+                        runtime.control_view(connection)
+                    };
+                    if current_view != view {
                         return Err(GatewayError::new("VIEW_CHANGED"));
                     }
                     Ok(())
@@ -1872,6 +1827,9 @@ impl Core {
             "input_revision".into(),
             runtime.media.input_revision().into(),
         );
+        result
+            .body
+            .insert("control_reference".into(), runtime.control_reference());
         result.body.insert(
             "journal_remaining".into(),
             (256 - session.journal.len()).into(),

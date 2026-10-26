@@ -83,29 +83,48 @@ fn advertised_mcp_contract_matches_the_original_sdk_registration() {
     let expected: Value = serde_json::from_str(&legacy("mcp-contract", None)).unwrap();
     let mut actual = kvmhelm::mcp::contract().clone();
     let tools = actual["tools"].as_array_mut().unwrap();
-    let open = tools
-        .iter_mut()
-        .find(|tool| tool["name"] == "open_computer")
-        .unwrap();
-    assert_eq!(
-        open["inputSchema"]["properties"]
-            .as_object_mut()
+    for (name, extension) in [
+        (
+            "open_computer",
+            " The session remains usable when video_error reports NO_SIGNAL or FRAME_TIMEOUT and no image is returned. Use its control_reference for keyboard and mouse input without video. Opening never sends a wake key or other input.",
+        ),
+        (
+            "computer",
+            " A reference with frame_id uses image pixels and requires that fresh frame. Alternatively copy the latest control_reference returned by open_computer, computer_control or computer; omit frame_id and use normalized mouse coordinates 0..32767 on each axis. This supports ordinary HID input without video, including a sleeping PiKVM reporting HID offline. Use observation.mode=none to send input without waiting for an image.",
+        ),
+    ] {
+        let tool = tools.iter_mut().find(|tool| tool["name"] == name).unwrap();
+        let original = expected["tools"]
+            .as_array()
             .unwrap()
-            .remove("wake"),
-        Some(json!({"type":"boolean"}))
-    );
-    let original = expected["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|tool| tool["name"] == "open_computer")
-        .unwrap();
-    let extension = " With explicit user permission to wake a sleeping target, set wake=true in control mode: only if there is no screen, send one fixed Shift tap under the exclusive lease and wait for a fresh image. Reuse the same request_id on retry; never automatically resend an uncertain wake with a new ID.";
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap();
+        assert!(tool["description"].as_str().unwrap().contains(extension));
+        assert_eq!(
+            tool["description"].as_str().unwrap().replace(extension, ""),
+            original["description"].as_str().unwrap()
+        );
+        tool["description"] = original["description"].clone();
+        if name == "computer" {
+            assert_eq!(
+                tool["inputSchema"]["properties"]["reference"]["required"],
+                json!(["view_id", "input_revision"])
+            );
+            tool["inputSchema"]["properties"]["reference"]["required"] =
+                original["inputSchema"]["properties"]["reference"]["required"].clone();
+        }
+    }
+    let extension = " Control also works without video: copy control_reference into computer.reference, without adding frame_id; mouse coordinates then range from 0 to 32767 on each axis. Use observation.mode=none when no image is available. Opening or acquiring control never sends input.";
+    assert!(actual["instructions"].as_str().unwrap().contains(extension));
     assert_eq!(
-        open["description"].as_str().unwrap().replace(extension, ""),
-        original["description"].as_str().unwrap()
+        actual["instructions"]
+            .as_str()
+            .unwrap()
+            .replace(extension, ""),
+        expected["instructions"].as_str().unwrap()
     );
-    open["description"] = original["description"].clone();
+    actual["instructions"] = expected["instructions"].clone();
     assert_eq!(actual, expected);
 }
 #[test]

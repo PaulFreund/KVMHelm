@@ -481,7 +481,7 @@ async fn snapshot_warmup_retries_only_503_and_cancellation_stops_read_retries() 
 }
 
 #[tokio::test]
-async fn an_explicit_wake_reaches_offline_hid_on_pikvm_and_both_comet_models() {
+async fn ordinary_input_reaches_offline_hid_on_pikvm_and_both_comet_models() {
     for model in ["PiKVM v4", "GL-RM1 (Comet)", "GL-RM10 (Comet Pro)"] {
         let f = Fixture::new(false).await;
         f.state.hid_online.store(false, Ordering::Release);
@@ -504,24 +504,22 @@ async fn an_explicit_wake_reaches_offline_hid_on_pikvm_and_both_comet_models() {
         );
         assert_eq!(f.state.snapshot_calls.load(Ordering::Acquire), 1);
         assert!(!driver.capabilities().await.unwrap().keyboard.hid);
-        assert_eq!(
-            driver
-                .execute(
-                    &action(json!({"type":"keypress","keys":["SHIFT"]})),
-                    &context()
-                )
-                .await
-                .err()
-                .unwrap()
-                .code,
-            "UNSUPPORTED_ACTION"
-        );
         driver
-            .wake(&ActionContext {
-                width: 0,
-                height: 0,
-                ..context()
-            })
+            .execute(
+                &action(json!({"type":"keypress","keys":["ENTER"]})),
+                &context(),
+            )
+            .await
+            .unwrap();
+        driver
+            .execute(
+                &action(json!({"type":"move","x":32767,"y":0})),
+                &ActionContext {
+                    width: 32768,
+                    height: 32768,
+                    ..context()
+                },
+            )
             .await
             .unwrap();
         f.state.status.store(200, Ordering::Release);
@@ -540,15 +538,19 @@ async fn an_explicit_wake_reaches_offline_hid_on_pikvm_and_both_comet_models() {
         driver.disconnect().await.unwrap();
         let events = f.state.events.lock().unwrap().clone();
         assert!(
-            events.iter().any(
-                |event| event["event"]["key"] == "ShiftLeft" && event["event"]["state"] == true
-            )
+            events
+                .iter()
+                .any(|event| event["event"]["key"] == "Enter" && event["event"]["state"] == true)
         );
         assert!(
             events
                 .iter()
-                .any(|event| event["event"]["key"] == "ShiftLeft"
-                    && event["event"]["state"] == false)
+                .any(|event| event["event"]["key"] == "Enter" && event["event"]["state"] == false)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event["event_type"] == "mouse_move")
         );
         f.close().await;
     }

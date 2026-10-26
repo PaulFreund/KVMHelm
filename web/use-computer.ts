@@ -6,6 +6,8 @@ import type {
   SessionView,
   ToolEnvelope,
   ComputerAction,
+  ControlReference,
+  ToolBody,
 } from "../shared/contracts";
 import { InputQueue } from "./input-queue";
 
@@ -18,6 +20,7 @@ export function useComputer(
     frame = ref<FrameInfo>(),
     source = ref("");
   const rotating = ref(false);
+  const controlReference = ref<ControlReference>();
   const busy = ref(false),
     control = ref(false),
     last = ref(0),
@@ -61,22 +64,24 @@ export function useComputer(
       frame.value = info;
       received(info);
     }
-    if (result.structuredContent.session)
-      session.value = result.structuredContent.session;
-    if (
-      session.value &&
-      result.structuredContent.journal_remaining !== undefined
-    )
-      session.value.journal_remaining =
-        result.structuredContent.journal_remaining;
+    updateState(result.structuredContent);
   }
-  async function open(mode: "observe" | "control" = "observe", wake = false) {
+  function updateState(body: ToolBody) {
+    if (body.session) session.value = body.session;
+    if (body.control_reference) controlReference.value = body.control_reference;
+    if (body.video_error) {
+      pendingFrameError = body.video_error.message;
+      frameError.value = pendingFrameError;
+    }
+    if (session.value && body.journal_remaining !== undefined)
+      session.value.journal_remaining = body.journal_remaining;
+  }
+  async function open(mode: "observe" | "control" = "observe") {
     const version = epoch;
     const result = await tool("open_computer", {
       computer_id: device().device_id,
       mode,
       ...(mode === "control" ? { request_id: crypto.randomUUID() } : {}),
-      ...(wake ? { wake: true } : {}),
       profile: overview() ? "overview" : "active",
     });
     if (disposed || epoch !== version) {
@@ -175,7 +180,7 @@ export function useComputer(
     cancelInputs();
     try {
       if (!session.value) {
-        await open("control", true);
+        await open("control");
         control.value = !!session.value;
         error.value = "";
         refresh();
@@ -188,13 +193,8 @@ export function useComputer(
         operation: releasing ? "release" : "acquire",
       });
       control.value = !releasing;
+      show(result);
       if (result.structuredContent.session_closed) session.value = undefined;
-      if (control.value && session.value)
-        show(
-          await tool("computer_screenshot", {
-            session_id: session.value.session_id,
-          }),
-        );
       error.value = "";
       refresh();
     } catch (e) {
@@ -205,7 +205,7 @@ export function useComputer(
     }
   }
   async function execute(actions: ComputerAction[]) {
-    if (!control.value || !frame.value || !session.value || disposed)
+    if (!control.value || !controlReference.value || !session.value || disposed)
       throw new Error("Steuerung nicht verfügbar.");
     working = true;
     pollAbort?.abort();
@@ -227,37 +227,35 @@ export function useComputer(
         }
         const rotated = session.value as SessionView | undefined;
         if (!rotated) return false;
-        await tool("computer_control", {
-          session_id: rotated.session_id,
-          request_id: crypto.randomUUID(),
-          operation: "acquire",
-        });
+        show(
+          await tool("computer_control", {
+            session_id: rotated.session_id,
+            request_id: crypto.randomUUID(),
+            operation: "acquire",
+          }),
+        );
         if (epoch !== version || disposed) {
           await tool("close_computer", { session_id: rotated.session_id });
           session.value = undefined;
           return false;
         }
-        show(
-          await tool("computer_screenshot", { session_id: rotated.session_id }),
-        );
       }
-      if (!session.value || !frame.value || epoch !== version) return false;
-      const f = frame.value;
+      if (!session.value || !controlReference.value || epoch !== version)
+        return false;
       const result = await tool("computer", {
         session_id: (session.value as SessionView).session_id,
         request_id: crypto.randomUUID(),
-        reference: {
-          frame_id: f.frame_id,
-          view_id: f.view_id,
-          input_revision: f.input_revision,
-        },
+        reference: controlReference.value,
         actions,
+        observation: { mode: "none" },
       });
       if (!disposed && epoch === version) {
         show(result);
         error.value = "";
       }
     } catch (e) {
+      if (e instanceof ApiError && e.result && !disposed && epoch === version)
+        updateState(e.result);
       error.value = handleFailure(e);
       queue.cancel();
       if (

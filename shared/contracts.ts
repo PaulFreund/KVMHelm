@@ -76,6 +76,10 @@ export interface GatewayFailure {
   code: string;
   message: string;
 }
+export interface ControlReference {
+  view_id: string;
+  input_revision: number;
+}
 export interface ToolBody {
   ok: boolean;
   error?: GatewayFailure;
@@ -84,6 +88,8 @@ export interface ToolBody {
   journal_remaining?: number;
   session_closed?: boolean;
   lease?: LeaseView | null;
+  control_reference?: ControlReference;
+  video_error?: GatewayFailure;
   [key: string]: unknown;
 }
 export interface ToolEnvelope {
@@ -246,7 +252,7 @@ export const actionSchema = z.discriminatedUnion("type", [
 export type ComputerAction = z.infer<typeof actionSchema>;
 export const referenceSchema = z
   .object({
-    frame_id: z.string(),
+    frame_id: z.string().optional(),
     view_id: z.string(),
     input_revision: z.number().int(),
   })
@@ -257,7 +263,6 @@ export const toolSchemas = {
     .object({
       computer_id: z.string(),
       mode: z.enum(["observe", "control"]),
-      wake: z.boolean().optional(),
       request_id: z.string().min(1).max(128).optional(),
       profile: profileSchema.optional(),
     })

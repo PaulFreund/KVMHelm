@@ -398,7 +398,7 @@ impl KvmDriver for PiKvmDriver {
                             .send(DriverEvent::CapabilitiesChangedAt(self.connection_epoch()));
                         return Err(GatewayError::message(
                             "NO_SIGNAL",
-                            "No HDMI signal; the target may be asleep. Request control with wake=true to send one wake key.",
+                            "No HDMI signal; keyboard and mouse control remain available.",
                         ));
                     }
                     if tokio::time::Instant::now() >= deadline {
@@ -465,7 +465,9 @@ impl KvmDriver for PiKvmDriver {
             width,
             height,
             caps.mouse.absolute,
-            caps.keyboard.hid,
+            // KVMD's online flag describes the USB host, not whether this
+            // adapter supports HID. A sleeping host must still receive input.
+            true,
             self.device.keyboard_layout,
         )
     }
@@ -473,18 +475,6 @@ impl KvmDriver for PiKvmDriver {
         self.validate(std::slice::from_ref(action), context.width, context.height)?;
         self.hid
             .execute(self, action, context, self.device.keyboard_layout)
-            .await
-    }
-    async fn wake(&self, context: &ActionContext) -> Result<Delivery> {
-        // Only the fixed wake tap may bypass the sleeping host's online bit.
-        // The HID sender still checks lease/cancellation and releases the key.
-        self.hid
-            .execute(
-                self,
-                &super::wake_action(),
-                context,
-                self.device.keyboard_layout,
-            )
             .await
     }
     async fn release_all_inputs(&self) -> Result<()> {
@@ -597,9 +587,6 @@ impl KvmDriver for CometDriver {
     }
     async fn execute(&self, action: &Action, context: &ActionContext) -> Result<Delivery> {
         self.0.execute(action, context).await
-    }
-    async fn wake(&self, context: &ActionContext) -> Result<Delivery> {
-        self.0.wake(context).await
     }
     async fn release_all_inputs(&self) -> Result<()> {
         self.0.release_all_inputs().await

@@ -161,21 +161,27 @@ try {
   const page = await context.newPage();
   let sleeping = !reference;
   if (!reference)
-    await page.route("**/api/v1/tools/open_computer", (route) => {
-      if (!sleeping || route.request().postDataJSON().mode !== "observe")
-        return route.continue();
-      return route.fulfill({
-        json: {
-          isError: true,
-          content: [],
-          structuredContent: {
-            ok: false,
-            frames: [],
-            error: { code: "NO_SIGNAL", message: "Sleeping fixture" },
-          },
-        },
-      });
+    await page.route("**/api/v1/tools/open_computer", async (route) => {
+      if (!sleeping) return route.continue();
+      const response = await route.fetch();
+      const body = await response.json();
+      body.content = body.content.filter((item) => item.type !== "image");
+      body.structuredContent.frames = [];
+      body.structuredContent.video_error = {
+        code: "NO_SIGNAL",
+        message: "Sleeping fixture",
+      };
+      return route.fulfill({ response, json: body });
     });
+  if (!reference)
+    await page.route("**/api/v1/sessions/*/frame", (route) =>
+      sleeping
+        ? route.fulfill({
+            status: 503,
+            json: { error: { code: "NO_SIGNAL", message: "Sleeping fixture" } },
+          })
+        : route.continue(),
+    );
   const errors = [],
     inputs = [];
   let streams = 0,
@@ -197,29 +203,86 @@ try {
     .first()
     .click();
   if (!reference) {
-    const wake = page.getByRole("button", {
-      name: "Aufwecken / Steuerung übernehmen",
+    const acquire = page.getByRole("button", {
+      name: "Steuerung übernehmen",
       exact: true,
     });
-    await expect(wake).toBeEnabled();
-    const opened = page.waitForRequest(
-      (r) =>
-        r.url().endsWith("/tools/open_computer") &&
-        r.postDataJSON().mode === "control",
+    await expect(acquire).toBeEnabled();
+    await expect(page.locator(".empty-display")).toContainText(
+      "Sleeping fixture",
     );
-    await wake.click();
-    const args = (await opened).postDataJSON();
-    assert.equal(args.wake, true);
-    assert.ok(args.request_id);
-    await expect(page.locator(".screen img")).toBeVisible();
-    sleeping = false;
+    await acquire.click();
+    const blank = page.getByRole("group", {
+      name: "KVM-Bildschirm Desktop fixture",
+      exact: true,
+    });
+    await expect(blank).toBeFocused();
+    await expect(page.locator(".screen img")).toHaveCount(0);
+    assert.equal(
+      inputs.length,
+      0,
+      "acquiring control must not send a wake key",
+    );
+    const batchesBefore = (await request("/diagnostics")).metrics.batches;
+    await page.route(
+      "**/api/v1/tools/computer",
+      async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        body.isError = true;
+        body.structuredContent.ok = false;
+        body.structuredContent.error = {
+          code: "EXECUTION_UNKNOWN",
+          message: "Uncertain no-video input",
+        };
+        await route.fulfill({ response, json: body });
+      },
+      { times: 1 },
+    );
+    await page.keyboard.press("Enter");
+    await expect
+      .poll(async () => (await request("/diagnostics")).metrics.batches)
+      .toBeGreaterThan(batchesBefore);
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Uncertain no-video input" }),
+    ).toBeVisible();
+    await delay(150);
+    assert.equal(inputs.length, 1, "uncertain input must not replay");
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(async () => (await request("/diagnostics")).metrics.batches)
+      .toBe(batchesBefore + 2);
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Uncertain no-video input" }),
+    ).toHaveCount(0);
+    await blank.click({ position: { x: 100, y: 80 }, button: "right" });
+    await until(
+      () =>
+        inputs.some((r) =>
+          r.actions.some((a) => a.type === "click" && a.button === "right"),
+        ),
+      "Mouse without video",
+    );
+    await expect
+      .poll(async () => (await request("/diagnostics")).metrics.batches)
+      .toBeGreaterThan(batchesBefore + 2);
+    assert.ok(
+      inputs.every(
+        (r) =>
+          r.reference.frame_id === undefined && r.observation.mode === "none",
+      ),
+    );
+    await expect(page.locator(".screen img")).toHaveCount(0);
     await page
       .getByRole("button", { name: "Steuerung freigeben", exact: true })
       .click();
     await expect(
       page.getByRole("button", { name: "Steuerung übernehmen", exact: true }),
     ).toBeEnabled();
+    sleeping = false;
+    inputs.length = 0;
     await page.unroute("**/api/v1/tools/open_computer");
+    await page.unroute("**/api/v1/sessions/*/frame");
   }
   await expect(page.locator(".screen img")).toBeVisible();
   await createDevice(page, "Touch fixture");
@@ -304,6 +367,7 @@ try {
     .getByRole("button", { name: "Steuerung übernehmen", exact: true })
     .click();
   await expect(target).toBeFocused();
+  const batchesBeforeKeyboard = (await request("/diagnostics")).metrics.batches;
   await page.keyboard.press("a");
   await until(
     () =>
@@ -314,7 +378,7 @@ try {
   );
   await expect
     .poll(async () => (await request("/diagnostics")).metrics.batches)
-    .toBe(1);
+    .toBe(batchesBeforeKeyboard + 1);
   await page.keyboard.press("Control+Alt+Escape");
   await expect(target).not.toBeFocused();
   const localCount = inputs.length;

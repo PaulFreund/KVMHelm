@@ -455,7 +455,12 @@ impl Validate for Action {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Reference {
-    pub frame_id: String,
+    #[serde(
+        default,
+        deserialize_with = "optional",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub frame_id: Option<String>,
     pub view_id: String,
     #[serde(deserialize_with = "integer")]
     pub input_revision: i64,
@@ -528,12 +533,6 @@ pub struct ListComputers {
 pub struct OpenComputer {
     pub computer_id: String,
     pub mode: Mode,
-    #[serde(
-        default,
-        deserialize_with = "optional",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub wake: Option<bool>,
     #[serde(
         default,
         deserialize_with = "optional",
@@ -616,9 +615,6 @@ impl Validate for ToolRequest {
     fn validate(&self) -> Result<()> {
         match self {
             Self::OpenComputer(a) => {
-                if a.wake == Some(true) && a.mode != Mode::Control {
-                    return Err(GatewayError::invalid());
-                }
                 if let Some(id) = &a.request_id {
                     bounded_text(id, 1, 128)?;
                 }

@@ -84,6 +84,7 @@ import type {
   Preferences,
 } from "../shared/contracts";
 export class ApiError extends Error {
+  result?: ToolEnvelope["structuredContent"];
   constructor(
     public code: string,
     message: string,
