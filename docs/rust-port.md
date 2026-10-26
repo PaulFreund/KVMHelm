@@ -54,6 +54,12 @@ beide Pfade. Identische Wiederholungen senden keine Eingabe erneut. Der
 Originalvergleich weist die optionale `frame_id` und die ergänzten Hilfetexte
 gesondert aus; alle übrigen Metadaten bleiben gleich.
 
+Fokusverlust verwirft wartende Eingaben. Eine verspätete Bestätigung einer
+bereits angenommenen Eingabe aktualisiert trotzdem die aktuelle Referenz und
+das Journal derselben Session, damit die nächste bewusst ausgelöste Eingabe
+keine veraltete Revision verwendet. Sie stellt weder Fokus noch Kontrolle
+wieder her und darf neuere Sessiondaten nicht überschreiben.
+
 Diese Nacharbeit folgt der am 26.10.2026 ausdrücklich beschriebenen Bedienung
 ohne Video. Der zuvor versuchte feste Aufweck-Sonderpfad samt `wake`-Option
 ist entfernt. Ob der Zielrechner durch normale Eingaben tatsächlich aufwacht,
@@ -285,6 +291,8 @@ node scripts/native-mcp-interop.mjs
 Ein SHA-256-Fingerprint wird auf dem tatsächlich verwendeten TLS-Socket vor dem HTTP-/WS-Handshake mit Credentials geprüft. Bei gepinnten Verbindungen sind TLS-Session-Resumption und Early Data deaktiviert, damit jeder neue Socket erneut das Zertifikat prüft. Ein Pin setzt auch bei zusätzlich aktiviertem Insecure-Modus die Fingerprintprüfung durch. Ohne Pin gelten CA-/Hostnameprüfung oder der ausdrücklich konfigurierte Insecure-Modus; TLS-Handshake-Signaturen werden in allen Modi geprüft. Standardmäßig werden gebündelte Mozilla-Roots verwendet, eine Gerätekonfiguration mit `tls.ca_ref` liefert stattdessen ihre eigenen CA-Zertifikate. Pins auf einer HTTP-Adresse und ungültige CA-/Pinformate werden vor Credentials abgewiesen. TLS-Fehler werden ohne Roh-URL oder Credentials als öffentliche Fehler klassifiziert.
 
 Der KVMD-Socket verwendet höchstens 64 wartende Nachrichten und 64 KiB ausstehende HID-Bytes; Eingangsnachrichten und Einzelframes sind ebenfalls auf 64 KiB begrenzt. Vor dem tatsächlichen Versand wird die Controlberechtigung erneut geprüft. Ein Send-Ergebnis bedeutet `sent`, keine Gerätebestätigung. Keine HID-Nachricht wird nach Fehler/Reconnect automatisch erneut gesendet. Key-/Button-Zustände werden vor dem Press-Versuch erfasst; Freigaben werden auch nach einem fehlgeschlagenen oder abgebrochenen Press versucht. Unbestätigt gebliebene Releases werden nicht als Erfolg ausgegeben. Ein Ping läuft alle zehn Sekunden; ein fehlender Pong über mehr als 30 Sekunden schließt den Socket. Alte Socketcallbacks dürfen aktuelle Capabilities nicht überschreiben.
+
+Nach dem realen Texteingabefehler erhalten Tastaturzustände im PiKVM-/Comet-Pfad mindestens fünf Millisekunden Abstand. Der WebSocket-Versand wartet nicht auf das USB-Polling des Zielrechners; bei einem beschäftigten OTG-Gerät bevorzugt KVMD neuere Reports. Modifier, Tastendruck und Freigabe werden deshalb zeitlich getrennt. Abbruch beendet weitere Tastendrücke, während die Freigaben weiterhin versucht werden. Ein virtueller USB-Pollingtest prüft wiederholte Zeichen und Groß-/Kleinschreibung; der separate Abbruchtest prüft die Freigabe während dieser Wartezeit. Der JetKVM-Transport erhält keine zusätzliche Wartezeit. Die bestehende Batchdeadline und die Bedeutung von `sent` bleiben erhalten. Siehe [KVMD 4.16 OTG-Writer](https://github.com/pikvm/kvmd/blob/v4.16/kvmd/plugins/hid/otg/device.py) und [PiKVM-HID-API](https://docs.pikvm.org/api/#type-text-remotely).
 
 PiKVM-Snapshot-Warmup wiederholt ausschließlich HTTP 503 mit 100 ms Abstand bis zur Vier-Sekunden-Grenze; Authfehler werden sofort zurückgegeben. JPEG-/PNG-Metadaten werden außerhalb des Tokio-Reaktors unter Eingabe-/Pixel-/Allokationsgrenzen gelesen, ohne vollständige Pixeldaten zu dekodieren. Der inkrementelle MJPEG-Parser behält nur begrenzte unvollständige Daten und einen Suchoffset, verarbeitet aufgeteilte Marker und begrenzt den Puffer auf 12 MiB sowie den einzelnen Frame auf 8 MiB. Ein Stream muss innerhalb von fünf Sekunden einen vollständigen nächsten Frame liefern. Es werden keine Mediendateien geschrieben.
 

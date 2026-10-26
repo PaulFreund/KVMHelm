@@ -442,6 +442,20 @@ try {
   }
   if (!reference) assert.equal(sessionLossInjected, true);
   const batchesBeforeKeyboard = (await request("/diagnostics")).metrics.batches;
+  let confirmKeyboard;
+  const keyboardConfirmation = new Promise((resolve) => {
+    confirmKeyboard = resolve;
+  });
+  if (!reference)
+    await page.route(
+      "**/api/v1/tools/computer",
+      async (route) => {
+        const response = await route.fetch();
+        await keyboardConfirmation;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
   await page.keyboard.press("a");
   await until(
     () =>
@@ -455,6 +469,7 @@ try {
     .toBe(batchesBeforeKeyboard + 1);
   await page.keyboard.press("Control+Alt+Escape");
   await expect(target).not.toBeFocused();
+  confirmKeyboard();
   const localCount = inputs.length;
   await page.getByRole("button", { name: "Text / Paste", exact: true }).click();
   const field = page.getByLabel("Text auf Ziel eingeben");
@@ -490,7 +505,19 @@ try {
   ).toBeVisible();
   await expect(field).toHaveValue("line 1\nline 2");
   await page.getByRole("button", { name: "Senden", exact: true }).click();
-  await expect(field).toHaveValue("");
+  try {
+    await expect(field).toHaveValue("");
+  } catch (error) {
+    console.error(
+      "Paste after focus loss state",
+      JSON.stringify({
+        alerts: await page.getByRole("alert").allTextContents(),
+        toolbar: await page.locator(".control-toolbar").innerText(),
+        inputReferences: inputs.map((input) => input.reference),
+      }),
+    );
+    throw error;
+  }
   await expect(target).toBeFocused();
   const pastedCount = inputs.length;
   await target.evaluate((el) => {

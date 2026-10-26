@@ -118,6 +118,14 @@ Sessionverlust-Fixture eindeutig: Sie wartet zunächst auf eine tatsächlich
 bestehende Session und bestätigt, dass der injizierte Fehler verbraucht wurde.
 Diese letzte Änderung betrifft ausschließlich die Prüfung.
 
+Die abschließende Browserprüfung verzögert zusätzlich die Antwort einer schon
+angenommenen Tastatureingabe bis nach dem Fokusverlust. Ihre Bestätigung muss
+die Eingabereferenz und das verbleibende Journal für dieselbe Session weiter
+aktualisieren. Andernfalls wird die nächste bewusst gesendete Texteingabe als
+`STALE_REFERENCE` abgewiesen. Die Oberfläche übernimmt diese Bestätigung ohne
+Fokuswiederherstellung, Wiederholung oder Rücksetzen auf eine ältere Session
+beziehungsweise Inputrevision.
+
 Unter Ubuntu 24.04/WSL2 bestehen mit UID/GID 65534 ebenfalls Rustfmt, Clippy
 mit `-D warnings`, Vue-Build, alle 121 regulären nativen Tests, zehn direkte
 Originalvergleiche sowie der vollständige Browser- und MCP-HTTP-/stdio-Check.

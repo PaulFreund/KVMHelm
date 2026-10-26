@@ -287,6 +287,12 @@ async fn run_socket(
 
 #[async_trait]
 impl HidTransport for PiKvmDriver {
+    fn key_interval(&self) -> Duration {
+        // A successful WebSocket write does not wait for the USB host to poll
+        // the report. Separate modifier/press/release states so KVMD's OTG
+        // writer cannot replace a busy report with the next one immediately.
+        Duration::from_millis(5)
+    }
     async fn event(&self, kind: &str, value: Value, context: Option<&ActionContext>) -> Result<()> {
         if let Some(context) = context {
             context.check()?;

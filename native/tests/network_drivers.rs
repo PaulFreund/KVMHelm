@@ -22,6 +22,7 @@ use kvmhelm::{
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeSet,
     convert::Infallible,
     net::IpAddr,
     sync::{
@@ -1059,6 +1060,9 @@ struct RecordingSink {
 }
 #[async_trait]
 impl HidTransport for RecordingSink {
+    fn key_interval(&self) -> Duration {
+        Duration::from_millis(5)
+    }
     async fn event(&self, kind: &str, value: Value, context: Option<&ActionContext>) -> Result<()> {
         if let Some(context) = context {
             context.check()?;
@@ -1078,6 +1082,100 @@ impl HidTransport for RecordingSink {
         }
         Ok(())
     }
+}
+
+#[derive(Default)]
+struct PollingKeyboard {
+    events: Mutex<Vec<(tokio::time::Instant, Value)>>,
+    cancel_on_press: Option<CancellationToken>,
+}
+#[async_trait]
+impl HidTransport for PollingKeyboard {
+    fn key_interval(&self) -> Duration {
+        Duration::from_millis(5)
+    }
+    async fn event(&self, _: &str, value: Value, context: Option<&ActionContext>) -> Result<()> {
+        if let Some(context) = context {
+            context.check()?;
+        }
+        self.events
+            .lock()
+            .unwrap()
+            .push((tokio::time::Instant::now(), value.clone()));
+        if value["state"] == true
+            && let Some(cancel) = &self.cancel_on_press
+        {
+            cancel.cancel();
+        }
+        Ok(())
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn paced_keyboard_preserves_case_and_repeated_characters_between_usb_polls() {
+    let hid = Hid::default();
+    let keyboard = PollingKeyboard::default();
+    hid.execute(
+        &keyboard,
+        &action(json!({"type":"type","text":"aAaA"})),
+        &context(),
+        Layout::De,
+    )
+    .await
+    .unwrap();
+    let events = keyboard.events.lock().unwrap();
+    let start = events[0].0;
+    let end = (events.last().unwrap().0 - start).as_millis() as usize + 8;
+    let mut held = BTreeSet::new();
+    let mut index = 0;
+    let mut was_down = false;
+    let mut typed = String::new();
+    // A host polling every four milliseconds only sees the latest report.
+    for tick in (0..=end).step_by(4) {
+        while index < events.len() && (events[index].0 - start).as_millis() <= tick as u128 {
+            let event = &events[index].1;
+            let key = event["key"].as_str().unwrap();
+            if event["state"] == true {
+                held.insert(key);
+            } else {
+                held.remove(key);
+            }
+            index += 1;
+        }
+        let down = held.contains("KeyA");
+        if down && !was_down {
+            typed.push(if held.contains("ShiftLeft") { 'A' } else { 'a' });
+        }
+        was_down = down;
+    }
+    assert_eq!(typed, "aAaA");
+    assert!(!hid.has_pressed());
+}
+#[tokio::test(start_paused = true)]
+async fn cancellation_during_a_paced_key_hold_still_releases_the_chord() {
+    let hid = Hid::default();
+    let ctx = context();
+    let keyboard = PollingKeyboard {
+        cancel_on_press: Some(ctx.cancellation.clone()),
+        ..PollingKeyboard::default()
+    };
+    assert_eq!(
+        hid.execute(
+            &keyboard,
+            &action(json!({"type":"keypress","keys":["SHIFT","A"]})),
+            &ctx,
+            Layout::De,
+        )
+        .await
+        .unwrap_err()
+        .code,
+        "LEASE_REVOKED"
+    );
+    let events = keyboard.events.lock().unwrap();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].1, json!({"key":"ShiftLeft","state":true}));
+    assert_eq!(events[1].1, json!({"key":"KeyA","state":false}));
+    assert_eq!(events[2].1, json!({"key":"ShiftLeft","state":false}));
+    assert!(!hid.has_pressed());
 }
 #[tokio::test]
 async fn hid_releases_every_chord_member_after_an_uncertain_press_even_after_cancellation() {

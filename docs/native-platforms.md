@@ -197,6 +197,8 @@ für PiKVM und beide Comet-Modelle nach. Vue-Build und die vier Browser-Queue-
 Tests bestehen. Der Browsercheck prüft zusätzlich Eingaben ohne Anfangsbild,
 unbekannten Ausgang ohne Replay und Kontrollübernahme nach Sessionverlust;
 der MCP-HTTP-/stdio-Check verwendet kopierte Binaries mit leerem PATH.
+Die abschließende Browserprüfung erzwingt außerdem eine verspätete
+Eingabebestätigung nach Fokusverlust und prüft die anschließende Texteingabe.
 
 Die erneute Linuxprüfung unter Ubuntu 24.04/WSL2 als UID/GID 65534 besteht:
 Rustfmt, Clippy mit `-D warnings`, Vue-Build, 121 reguläre native Tests, zehn

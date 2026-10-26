@@ -76,6 +76,27 @@ export function useComputer(
     if (session.value && body.journal_remaining !== undefined)
       session.value.journal_remaining = body.journal_remaining;
   }
+  function acknowledgeInput(body: ToolBody, sessionId: string) {
+    const current = controlReference.value,
+      confirmed = body.control_reference;
+    if (
+      disposed ||
+      session.value?.session_id !== sessionId ||
+      !current ||
+      !confirmed ||
+      confirmed.view_id !== current.view_id ||
+      confirmed.input_revision < current.input_revision
+    )
+      return;
+    // Focus loss cancels queued input, but cannot undo an accepted operation.
+    // Keep its acknowledgement without restoring focus or older session state.
+    controlReference.value = confirmed;
+    if (body.journal_remaining !== undefined)
+      session.value.journal_remaining = Math.min(
+        session.value.journal_remaining,
+        body.journal_remaining,
+      );
+  }
   async function open(mode: "observe" | "control" = "observe") {
     const version = epoch;
     const result = await tool("open_computer", {
@@ -224,6 +245,7 @@ export function useComputer(
     working = true;
     pollAbort?.abort();
     const version = ++epoch;
+    let inputSessionId: string | undefined;
     try {
       if (session.value.journal_remaining <= 8) {
         rotating.value = true;
@@ -256,20 +278,24 @@ export function useComputer(
       }
       if (!session.value || !controlReference.value || epoch !== version)
         return false;
+      inputSessionId = (session.value as SessionView).session_id;
       const result = await tool("computer", {
-        session_id: (session.value as SessionView).session_id,
+        session_id: inputSessionId,
         request_id: crypto.randomUUID(),
         reference: controlReference.value,
         actions,
         observation: { mode: "none" },
       });
+      acknowledgeInput(result.structuredContent, inputSessionId);
       if (!disposed && epoch === version) {
         show(result);
         error.value = "";
       }
     } catch (e) {
-      if (e instanceof ApiError && e.result && !disposed && epoch === version)
-        updateState(e.result);
+      if (e instanceof ApiError && e.result) {
+        if (inputSessionId) acknowledgeInput(e.result, inputSessionId);
+        if (!disposed && epoch === version) updateState(e.result);
+      }
       error.value = handleFailure(e);
       queue.cancel();
       if (

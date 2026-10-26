@@ -11,6 +11,9 @@ use std::{collections::BTreeSet, sync::Mutex, time::Duration};
 
 #[async_trait]
 pub trait HidTransport: Send + Sync {
+    fn key_interval(&self) -> Duration {
+        Duration::ZERO
+    }
     async fn event(&self, kind: &str, value: Value, context: Option<&ActionContext>) -> Result<()>;
 }
 #[derive(Default)]
@@ -32,12 +35,16 @@ impl Hid {
         keys: &[String],
         context: &ActionContext,
     ) -> Result<()> {
+        let interval = transport.key_interval();
         let pressed = async {
             for key in keys {
                 self.keys.lock().unwrap().insert(key.clone());
                 transport
                     .event("key", json!({"key":key,"state":true}), Some(context))
                     .await?;
+                if !interval.is_zero() {
+                    context.delay(interval).await?;
+                }
             }
             Ok(())
         }
@@ -52,6 +59,10 @@ impl Hid {
                     self.keys.lock().unwrap().remove(key);
                 }
                 Err(error) => released = Err(error),
+            }
+            // Releases must finish even if cancellation interrupted a hold.
+            if !interval.is_zero() {
+                tokio::time::sleep(interval).await;
             }
         }
         pressed.and(released)
