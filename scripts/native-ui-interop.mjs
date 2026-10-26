@@ -383,10 +383,17 @@ try {
     name: "KVM-Bildschirm Desktop fixture",
     exact: true,
   });
-  if (!reference)
+  let sessionLossInjected = false;
+  if (!reference) {
+    await page.waitForResponse(
+      (response) =>
+        /\/api\/v1\/sessions\/[^/]+\/frame$/.test(response.url()) &&
+        response.status() === 200,
+    );
     await page.route(
       "**/api/v1/tools/computer_control",
       async (route) => {
+        sessionLossInjected = true;
         const args = route.request().postDataJSON();
         assert.equal(args.operation, "acquire");
         const closed = await request(
@@ -416,6 +423,7 @@ try {
       },
       { times: 1 },
     );
+  }
   await page
     .getByRole("button", { name: "Steuerung übernehmen", exact: true })
     .click();
@@ -432,6 +440,7 @@ try {
     );
     throw error;
   }
+  if (!reference) assert.equal(sessionLossInjected, true);
   const batchesBeforeKeyboard = (await request("/diagnostics")).metrics.batches;
   await page.keyboard.press("a");
   await until(
@@ -574,15 +583,29 @@ try {
     )
     .toBeLessThanOrEqual(8);
   await page.keyboard.press("c");
-  await until(
-    () =>
-      inputs.some(
-        (r) =>
-          r.session_id !== session.session_id &&
-          r.actions.some((a) => a.text === "c"),
-      ),
-    "Journal rotation",
-  );
+  try {
+    await until(
+      () =>
+        inputs.some(
+          (r) =>
+            r.session_id !== session.session_id &&
+            r.actions.some((a) => a.text === "c"),
+        ),
+      "Journal rotation",
+    );
+  } catch (error) {
+    console.error(
+      "Journal rotation state",
+      JSON.stringify({
+        alerts: await page.getByRole("alert").allTextContents(),
+        toolbar: await page.locator(".control-toolbar").innerText(),
+        sessions: await request("/sessions", "GET", undefined, client),
+        recentInputs: inputs.slice(-4),
+        focused: await target.evaluate((el) => el === document.activeElement),
+      }),
+    );
+    throw error;
+  }
   const rotated = await request("/sessions", "GET", undefined, client);
   assert.equal(rotated.length, 1);
   assert.notEqual(rotated[0].session_id, session.session_id);
