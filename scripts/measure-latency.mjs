@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 // Measures full responses, including image transfer/JSON parsing, without LLM or UI rendering.
 const [url, patFile, output, mode = 'http'] = process.argv.slice(2);
@@ -13,7 +14,7 @@ if (mode === 'stdio') {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const c = new Client({ name: 'latency-probe', version: '1' });
-  await c.connect(new StdioClientTransport({ command: process.execPath, args: [new URL('../dist/server/cli.js', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'), 'mcp', '--url', url, '--pat-file', patFile], stderr: 'pipe' }));
+  await c.connect(new StdioClientTransport({ command: process.env.KVMHELM_TEST_BINARY ?? fileURLToPath(new URL(`../target/release/kvmhelm${process.platform === 'win32' ? '.exe' : ''}`, import.meta.url)), args: ['mcp', '--url', url, '--pat-file', patFile], stderr: 'pipe' }));
   call = (name, args) => c.callTool({ name, arguments: args });
   cleanup = () => c.close();
 } else {

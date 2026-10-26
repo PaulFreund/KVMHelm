@@ -14,7 +14,7 @@ On the Rust port branch the launcher starts the native release executable at
 existing protected state; defaults are the repository's `.kvmhelm` directories.
 The native process does not load `.env`. See
 [native packages and migration](native-packaging.md) for helper profiles,
-account permissions and stopped updates. npm start still runs the TypeScript
-comparison reference.
+account permissions and stopped updates. `npm start` also starts Rust from
+`target/release`; the TypeScript original is isolated test data only.
 
 The local bridge uses http://127.0.0.1:8765; LAN clients use https://HOST:8766/mcp. Both require authentication. Keep PATs out of URLs and private keys outside the repository. Add extra browser origins with the daemon's --origin option when needed.

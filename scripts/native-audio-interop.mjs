@@ -1,3 +1,4 @@
+import { referenceImport, referencePath, referenceRoot } from "./reference.mjs";
 // Copied native binary with an empty PATH, synthetic Janus/KVMD and Opus/PCM.
 // No actual KVM, microphone, speaker, or production state is used.
 import assert from "node:assert/strict";
@@ -25,7 +26,7 @@ import {
 } from "werift";
 import OpusScript from "opusscript";
 import { chromium, expect } from "@playwright/test";
-import { localIceOnly } from "../dist/server/lan-ice.js";
+const { localIceOnly } = await referenceImport("dist/server/lan-ice.js");
 import {
   benchmark,
   reference,
@@ -46,7 +47,7 @@ const dir = await mkdtemp(join(tmpdir(), "kvmhelm-native-audio-"));
 const executable = reference
   ? resolve(process.env.KVMHELM_BENCH_NODE ?? process.execPath)
   : join(dir, process.platform === "win32" ? "kvmhelm.exe" : "kvmhelm");
-const prefix = reference ? [resolve("dist/server/cli.js")] : [];
+const prefix = reference ? [referencePath("dist/server/cli.js")] : [];
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([k]) => !k.toUpperCase().startsWith("KVMHELM_"),
@@ -58,7 +59,7 @@ const pluginAudio = process.env.KVMHELM_TEST_AUDIO_PLUGIN === "1";
 if (pluginAudio || benchmark)
   env.KVMHELM_NODE = process.env.KVMHELM_BENCH_NODE ?? process.execPath;
 const args = ["--data", join(dir, "data"), "--secrets", join(dir, "secrets")],
-  options = { cwd: reference ? process.cwd() : dir, env, windowsHide: true };
+  options = { cwd: reference ? referenceRoot : dir, env, windowsHide: true };
 let browser;
 let daemon,
   gateway = "",

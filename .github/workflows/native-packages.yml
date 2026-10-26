@@ -22,12 +22,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # migration checks use the actual pinned original
       - uses: actions/setup-node@v4
         with:
           node-version: 24.18.0
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run prepare:reference
       - run: rustup toolchain install 1.99.1 --profile minimal
       - run: npx playwright install --with-deps chromium
       - name: Validate launchd template syntax

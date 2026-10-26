@@ -1,3 +1,4 @@
+import { referencePath, referenceRoot } from "./reference.mjs";
 import { chromium, expect } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -10,8 +11,18 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 const dir = await mkdtemp(join(tmpdir(), "kvmhelm-ui-"));
-const native = process.env.KVMHELM_TEST_BINARY;
+const native =
+  process.env.KVMHELM_TEST_DAEMON === "typescript"
+    ? null
+    : (process.env.KVMHELM_TEST_BINARY ??
+      fileURLToPath(
+        new URL(
+          `../target/debug/kvmhelm${process.platform === "win32" ? ".exe" : ""}`,
+          import.meta.url,
+        ),
+      ));
 let executable = process.execPath;
 if (native) {
   executable = join(
@@ -21,7 +32,7 @@ if (native) {
   await copyFile(resolve(native), executable);
   await chmod(executable, 0o700);
 }
-const prefix = native ? [] : [resolve("dist/server/cli.js")];
+const prefix = native ? [] : [referencePath("dist/server/cli.js")];
 const childEnv = Object.fromEntries(
   Object.entries(process.env).filter(
     ([key]) => !key.toUpperCase().startsWith("KVMHELM_"),
@@ -29,7 +40,7 @@ const childEnv = Object.fromEntries(
 );
 if (native) childEnv.PATH = "";
 const childOptions = {
-  cwd: native ? dir : process.cwd(),
+  cwd: native ? dir : referenceRoot,
   env: childEnv,
   windowsHide: true,
 };

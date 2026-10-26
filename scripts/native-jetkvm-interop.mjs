@@ -1,8 +1,13 @@
+import {
+  referenceDependency,
+  referenceImport,
+  referencePath,
+  referenceRoot,
+} from "./reference.mjs";
 // Native Core <-> actual Chromium WebRTC H.264/data channel. All devices,
 // credentials, input and media are synthetic; no physical device is contacted.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
 import { copyFile, chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -10,8 +15,8 @@ import { join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
 import { WebSocketServer, WebSocket } from "ws";
-import { JetKvmDriver } from "../dist/server/drivers/jetkvm.js";
-import { deviceSchema } from "../dist/shared/contracts.js";
+const { JetKvmDriver } = await referenceImport("dist/server/drivers/jetkvm.js");
+const { deviceSchema } = await referenceImport("dist/shared/contracts.js");
 import {
   benchmark,
   reference as typescriptDaemon,
@@ -32,7 +37,7 @@ const dir = await mkdtemp(join(tmpdir(), "kvmhelm-native-jet-"));
 const executable = typescriptDaemon
   ? resolve(process.env.KVMHELM_BENCH_NODE ?? process.execPath)
   : join(dir, process.platform === "win32" ? "kvmhelm.exe" : "kvmhelm");
-const prefix = typescriptDaemon ? [resolve("dist/server/cli.js")] : [];
+const prefix = typescriptDaemon ? [referencePath("dist/server/cli.js")] : [];
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([k]) => !k.toUpperCase().startsWith("KVMHELM_"),
@@ -42,7 +47,7 @@ if (!typescriptDaemon) env.PATH = "";
 if (benchmark) normalizeBenchmarkEnvironment(env);
 const helperDirectory = process.env.KVMHELM_TEST_HELPER_DIRECTORY;
 if (!helperDirectory) {
-  env.KVMHELM_FFMPEG = createRequire(import.meta.url)("ffmpeg-static");
+  env.KVMHELM_FFMPEG = referenceDependency("ffmpeg-static");
   assert.ok(env.KVMHELM_FFMPEG, "Fixture FFmpeg required");
 }
 if (typescriptDaemon && helperDirectory)
@@ -52,7 +57,7 @@ if (typescriptDaemon && helperDirectory)
   );
 const args = ["--data", join(dir, "data"), "--secrets", join(dir, "secrets")];
 const options = {
-  cwd: typescriptDaemon ? process.cwd() : dir,
+  cwd: typescriptDaemon ? referenceRoot : dir,
   env,
   windowsHide: true,
 };

@@ -1,9 +1,12 @@
 # Native Pakete und Betrieb
 
 TASK-0126 bleibt bis zur Gesamtabnahme offen. Die Pakete enthalten den
-Rust-Daemon mit eingebauter Vue-Oberfläche. Der TypeScript-Server bleibt im
-Quellbaum als Vergleichsreferenz; er ist kein Bestandteil der Pakete oder
-des neuen Container-Runtimes. `npm start` startet weiterhin diese Referenz.
+Rust-Daemon mit eingebauter Vue-Oberfläche. Auch `npm start` im Quellcheckout
+startet nun Rust (`npm run build:native` baut `target/release/kvmhelm`). Der
+ersetzte TypeScript-Server wird nur für Tests aus dem gepinnten Gitcommit in
+`target/reference` gebaut: `npm run prepare:reference`. Er ist kein Bestandteil
+der Pakete oder des Container-Runtimes. Alle npm-Abhängigkeiten im aktuellen
+Checkout sind ausschließlich Build-/Testwerkzeuge.
 
 ## Bauen
 
@@ -68,6 +71,12 @@ Browsermodule, des Cargo-Normal-/Buildgraphen, vendorter Bibliotheken und
 Helfer. Fehlende Cratetexte werden aus exakten upstream Commits ergänzt;
 Quelle/Hash stehen in `packaging/license-sources.json`. Die fehlende
 Anwendungslizenz wird dadurch nicht ersetzt oder neu festgelegt.
+
+Für die isolierten Migrations-/Interopprüfungen aus dem Quellcheckout einmal
+`npm run prepare:reference` ausführen. Das benötigt den Originalcommit in der
+lokalen Git-Historie; bei einem flachen Checkout diesen gezielt mit
+`git fetch origin b40b2dde246533a25a18148a6b59faced676d9ba` nachladen. Die
+Referenz erhält ihre eigenen npm-Abhängigkeiten und wird nicht paketiert.
 
 ## Installation und Migration
 
@@ -215,5 +224,6 @@ Daten/Secrets verlangen tatsächlich anwendbare private POSIX-Modi.
 Ein Mount, der `chmod` annimmt, aber offene Rechte behält, wird jetzt abgewiesen.
 
 macOS/launchd, Windows-SCM, Container und physische Geräte bleiben separat
-offen. Der Stand ändert weder eine vorhandene Installation noch den bisherigen
-`npm start`-Referenzpfad.
+offen. Der Stand ändert keine vorhandene Installation. Der Quellcheckout
+verwendet mit `npm start` den nativen Standardstart; ein Dienstwechsel bleibt
+eine getrennte Betreiberaktion.

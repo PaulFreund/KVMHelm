@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const [major, minor] = process.versions.node.split(".").map(Number);
@@ -31,21 +30,17 @@ try {
     );
   const npm = process.env.npm_execpath;
   if (!npm) throw new Error("Run this installer with npm run setup.");
-  await run(process.execPath, [npm, "ci"]);
+  await run(process.execPath, [npm, "ci", "--include=dev"]);
   await run(process.execPath, [npm, "run", "build"]);
-  const bundled = createRequire(import.meta.url)("ffmpeg-static");
-  const ffmpeg =
-    process.env.KVMHELM_FFMPEG ||
-    (bundled && existsSync(bundled) ? bundled : "ffmpeg");
-  await run(ffmpeg, ["-version"], { stdio: "ignore" });
+  await run(process.execPath, [npm, "run", "build:native"]);
   const secrets = resolve(
     process.env.KVMHELM_SECRETS || join(homedir(), ".kvmhelm", "secrets"),
   );
   const pat = join(secrets, "cli.pat");
   if (!existsSync(pat))
-    await run(process.execPath, ["dist/server/cli.js", "token", "bootstrap"]);
+    await run(process.execPath, ["scripts/kvmhelm.mjs", "token", "bootstrap"]);
   console.log(
-    `\nKVMHelm is ready. Start with: npm start\nOpen: http://127.0.0.1:8765\nLogin token file: ${pat}\nExisting settings and tokens are preserved.`,
+    `\nKVMHelm native is ready. Start with: npm start\nOpen: http://127.0.0.1:8765\nLogin token file: ${pat}\nJetKVM video needs FFmpeg; plugins need Node. Use a native media/full package or configure KVMHELM_FFMPEG/KVMHELM_NODE.\nExisting settings and tokens are preserved.`,
   );
 } catch (error) {
   console.error(`Setup failed: ${error.message}`);

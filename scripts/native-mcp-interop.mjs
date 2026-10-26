@@ -1,3 +1,4 @@
+import { referenceImport, referencePath, referenceRoot } from "./reference.mjs";
 // Exercise the copied native daemon/stdio binary with the original TypeScript
 // SDK, including a response lost after accepted input. All targets are synthetic.
 import assert from "node:assert/strict";
@@ -17,7 +18,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { imagePresentation, instructions } from "../dist/server/mcp.js";
+const { imagePresentation, instructions } =
+  await referenceImport("dist/server/mcp.js");
 
 assert.ok(
   process.env.KVMHELM_TEST_BINARY,
@@ -39,7 +41,9 @@ const options = { cwd: dir, env: childEnv, windowsHide: true };
 const patFile = join(dir, "secrets", "cli.pat");
 const referenceDaemon = process.env.KVMHELM_TEST_DAEMON === "typescript";
 const daemonCommand = referenceDaemon ? process.execPath : executable;
-const daemonPrefix = referenceDaemon ? [resolve("dist/server/cli.js")] : [];
+const daemonPrefix = referenceDaemon
+  ? [referencePath("dist/server/cli.js")]
+  : [];
 let daemon,
   url = "",
   proxy,
@@ -68,7 +72,11 @@ async function start() {
       url ? new URL(url).port : "0",
       ...args,
     ],
-    { ...options, stdio: ["ignore", "ignore", "pipe"] },
+    {
+      ...options,
+      cwd: referenceDaemon ? referenceRoot : dir,
+      stdio: ["ignore", "ignore", "pipe"],
+    },
   );
   let logs = "";
   daemon.stderr.on("data", (chunk) => {
@@ -87,7 +95,7 @@ async function start() {
       return;
     await delay(100);
   }
-  throw Error("Native daemon startup timeout");
+  throw Error("Daemon startup timeout: " + logs);
 }
 async function stop() {
   if (!daemon || daemon.exitCode !== null) return;

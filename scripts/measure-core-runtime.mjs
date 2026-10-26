@@ -1,3 +1,4 @@
+import { referencePath } from "./reference.mjs";
 // Controlled loopback KVMD inputs and identical pre-encoded 1280x720 JPEGs.
 // No user state, device, microphone, desktop, or clipboard is accessed.
 import assert from "node:assert/strict";
@@ -37,7 +38,7 @@ const node = resolve(
   process.env.KVMHELM_BENCH_NODE ?? join(helper, "node.exe"),
 );
 const executable = reference ? node : binary;
-const prefix = reference ? [resolve("dist/server/cli.js")] : [];
+const prefix = reference ? [referencePath("dist/server/cli.js")] : [];
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([k]) => !k.toUpperCase().startsWith("KVMHELM_"),

@@ -11,12 +11,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # pinned pre-port reference is prepared only for tests
       - uses: actions/setup-node@v4
         with:
           node-version: 24.18.0
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run test:web
+      - run: npm run prepare:reference
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
       - run: cargo fmt --all -- --check
@@ -25,8 +29,10 @@ jobs:
       - run: cargo test --locked --test legacy_compat -- --ignored
       - run: cargo build --locked --features embedded-web
       - run: npx playwright install --with-deps chromium
-      - run: npm test
-      - run: node scripts/ui-layout.mjs
+      - run: npm run test:reference
+      - name: Original layout acceptance against the isolated reference
+        shell: bash
+        run: KVMHELM_TEST_DAEMON=typescript node scripts/ui-layout.mjs
       - name: Native executable with embedded Vue assets
         shell: bash
         run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/ui-layout.mjs

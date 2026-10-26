@@ -1,31 +1,32 @@
+import { referenceDependency, referenceImport } from "./reference.mjs";
 // Reference implementation for Rust compatibility tests. All state is supplied
 // by the test in a temporary directory; no configured/live gateway is contacted.
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Store, Secrets } from "../dist/server/store.js";
-import { Auth, tokenSchema } from "../dist/server/auth.js";
-import { Core } from "../dist/server/core.js";
-import {
-  deviceSchema,
-  actionSchema,
-  toolSchemas,
-  scopes,
-} from "../dist/shared/contracts.js";
-import { keyName, textKeys } from "../dist/server/drivers/keyboard.js";
-import { usbKey } from "../dist/server/drivers/usb-key.js";
-import { isLocalAddress } from "../dist/server/network.js";
-import { PiKvmDriver } from "../dist/server/drivers/pikvm.js";
-import { H264Assembler } from "../dist/server/drivers/h264.js";
-import { mcpServer } from "../dist/server/mcp.js";
+const { Store, Secrets } = await referenceImport("dist/server/store.js");
+const { Auth, tokenSchema } = await referenceImport("dist/server/auth.js");
+const { Core } = await referenceImport("dist/server/core.js");
+const { deviceSchema, actionSchema, toolSchemas, scopes } =
+  await referenceImport("dist/shared/contracts.js");
+const { keyName, textKeys } = await referenceImport(
+  "dist/server/drivers/keyboard.js",
+);
+const { usbKey } = await referenceImport("dist/server/drivers/usb-key.js");
+const { isLocalAddress } = await referenceImport("dist/server/network.js");
+const { PiKvmDriver } = await referenceImport("dist/server/drivers/pikvm.js");
+const { H264Assembler } = await referenceImport("dist/server/drivers/h264.js");
+const { mcpServer } = await referenceImport("dist/server/mcp.js");
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   LATEST_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "@modelcontextprotocol/sdk/types.js";
-import { ipKeyGenerator } from "express-rate-limit";
-import { PluginHost, manifestSchema } from "../dist/server/plugins.js";
+const { ipKeyGenerator } = referenceDependency("express-rate-limit");
+const { PluginHost, manifestSchema } = await referenceImport(
+  "dist/server/plugins.js",
+);
 
 const [command, dir] = process.argv.slice(2);
 const deviceId = "11111111-1111-4111-8111-111111111111";

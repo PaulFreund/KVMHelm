@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir, access } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import os from "node:os";
+import { referencePath, referenceRevision } from "./reference.mjs";
 const args = new Map();
 for (let n = 2; n < process.argv.length; n += 2) {
   assert.ok(
@@ -58,19 +59,8 @@ const hash = async (path) =>
   createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
-assert.equal(
-  command("git", [
-    "diff",
-    "b40b2dd",
-    "--name-only",
-    "--",
-    "server",
-    "shared",
-    "web",
-  ]),
-  "",
-  "Reference implementation changed; investigate before comparing",
-);
+// referencePath verifies the pinned original source and compiled outputs.
+referencePath("dist/server/cli.js");
 const product = JSON.parse(
   await readFile(join(helpers, "package.json"), "utf8"),
 );
@@ -90,6 +80,8 @@ const scripts = [
   "native-jetkvm-interop.mjs",
   "native-audio-interop.mjs",
   "measure-native-runtime.mjs",
+  "reference.mjs",
+  "prepare-reference.mjs",
 ];
 const metadata = {
   schemaVersion: 1,
@@ -108,9 +100,9 @@ const metadata = {
     rust_version: product.rustVersion,
   },
   reference: {
-    source_revision: command("git", ["rev-parse", "b40b2dd"]),
-    compiled_cli_sha256: await hash("dist/server/cli.js"),
-    npm_lock_sha256: await hash("package-lock.json"),
+    source_revision: referenceRevision,
+    compiled_cli_sha256: await hash(referencePath("dist/server/cli.js")),
+    npm_lock_sha256: await hash(referencePath("package-lock.json")),
   },
   helpers: {
     node: {

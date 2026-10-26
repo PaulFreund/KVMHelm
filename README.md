@@ -2,15 +2,26 @@
 
 Ein lokaler KVM-Daemon für Menschen und Computer-Use-Clients. Der POC unterstützt **PiKVM v4, JetKVM sowie GL.iNet Comet GL-RM1 und GL-RM10** mit Fokus auf **geringe Computer-Use-Latenz**. Weitere Hardware erhält eigene Adapter; PiKVM-Protokollkompatibilität wird nicht vorausgesetzt.
 
-Die laufende [Rust-Portierung](docs/rust-port.md) enthält einen nativen HTTP-/MCP-Daemon und eine CLI mit stdio-Bridge, eingebetteter Vue-Oberfläche, Persistenz, Autorisierung, Computer-Use-Core, geteilten Medien, Simulator und PiKVM-/Comet-/JetKVM-Adaptern einschließlich Audio. Die vorhandenen Plugins erhalten einen optionalen Node-IPC-Adapter. [Native Pakete](docs/native-packaging.md) bieten Core-, FFmpeg- und vollständige Helferprofile mit gepinnten Downloads und Notices. Dockerfile und LAN-Launcher starten auf diesem Branch den nativen Daemon. Plattform-/Hardwareabnahme und vergleichende Laufzeitmessungen bleiben offen. Der TypeScript-Daemon bleibt bis zur Gesamtabnahme die Vergleichsreferenz und wird weiterhin wie unten über npm gestartet.
+Der Rust-Dienst enthält HTTP/MCP und eine CLI mit stdio-Bridge, eingebetteter Vue-Oberfläche, Persistenz, Autorisierung, Computer-Use-Core, geteilten Medien, Simulator und PiKVM-/Comet-/JetKVM-Adaptern einschließlich Audio. Bestehende Plugins verwenden einen optionalen Node-IPC-Adapter. [Native Pakete](docs/native-packaging.md) bieten Core-, FFmpeg- und vollständige Helferprofile mit gepinnten Downloads und Notices. Windows- und Linux-Laufzeitprüfungen sowie der [Windows-Laufzeitvergleich](docs/native-performance.md) sind dokumentiert; verbleibende Plattform- und Hardwaregrenzen stehen in der [Prüfmatrix](docs/native-platforms.md). Die [Portierungszuordnung](docs/rust-port.md) beschreibt Verträge und bewusste Abweichungen. Das ersetzte TypeScript-Backend existiert ausschließlich als isolierte, gepinnte Testreferenz aus der Git-Historie.
 
 ## Start
 
-Die folgenden npm-Befehle starten die TypeScript-Vergleichsreferenz. Für den
-nativen Daemon mit eingebetteter Oberfläche siehe [Pakete und Migration](docs/native-packaging.md);
-sein Corebetrieb benötigt kein Node/npm.
+Ein natives Paket entpacken und mit `verify.ps1` beziehungsweise `verify.sh`
+prüfen; siehe [Pakete und Migration](docs/native-packaging.md). Im Paketverzeichnis:
 
-Windows, macOS und Linux: Voraussetzung sind Git und Node.js **24.18 oder neuer innerhalb Version 24**. Abhängigkeiten sind im Lockfile gepinnt.
+```sh
+./kvmhelm token bootstrap
+./kvmhelm serve
+```
+
+Unter Windows `./kvmhelm.exe` verwenden. Der Corebetrieb benötigt kein Node/npm.
+JetKVM-Video braucht FFmpeg (`media`/`full`); vorhandene Plugins brauchen Node
+(`full`). Helfer werden neben dem Binary gefunden oder ausdrücklich über
+`KVMHELM_FFMPEG`/`KVMHELM_NODE` gewählt.
+
+Für den Bau aus dem Quellcheckout: Git, Node.js **24.18 oder neuer innerhalb
+Version 24**, Rust **1.99.1** sowie C/C++ und CMake gemäß
+[Buildanleitung](docs/native-packaging.md). Abhängigkeiten sind in Lockfiles gepinnt.
 
 ```sh
 git clone https://github.com/PaulFreund/KVMHelm.git
@@ -25,11 +36,14 @@ Neue Installationen starten mit einer leeren Geräteliste. Es werden keine Demo-
 
 In der Oberfläche einen **PiKVM v4 Mini/Plus, JetKVM oder GL.iNet Comet** mit administrativ festgelegter LAN-Adresse, Login und DE-/US-Ziellayout anlegen. Selbstsignierte Geräte benötigen eine eigene vertrauenswürdige CA oder den administrativ geprüften SHA-256-Fingerprint des vollständigen Gerätezertifikats. KVMHelm verändert weder PiKVM-Firmware noch USB-/EDID-/Mikrofonkonfiguration.
 
+Die CLI-Beispiele gelten im Paketverzeichnis. Im Quellcheckout stattdessen
+`npm run cli -- doctor` beziehungsweise den gewünschten Befehl verwenden.
+
 ```sh
-node dist/server/cli.js doctor
-node dist/server/cli.js device list
-node dist/server/cli.js device test DEVICE_ID
-node dist/server/cli.js device benchmark DEVICE_ID
+./kvmhelm doctor
+./kvmhelm device list
+./kvmhelm device test DEVICE_ID
+./kvmhelm device benchmark DEVICE_ID
 ```
 
 `--data`, `--secrets`, `--pat-file` und `--url` überschreiben Pfade/Ziel. Alternativ unterstützt die CLI `KVMHELM_DATA`, `KVMHELM_SECRETS`, `KVMHELM_URL`, `KVMHELM_PAT` sowie für Listener `KVMHELM_HOST`, `KVMHELM_PORT`, `KVMHELM_LAN_HOST`, `KVMHELM_LAN_PORT`, `KVMHELM_CERT` und `KVMHELM_KEY`. `npm start` lädt eine vorhandene lokale `.env`. PAT-Werte gehören nicht in Kommandozeilenargumente. Dateien mit Secrets müssen unter Windows per NTFS-ACL auf den Dienstbenutzer beschränkt werden; POSIX-Modi alleine setzen keine Windows-ACL.
@@ -43,7 +57,7 @@ node dist/server/cli.js device benchmark DEVICE_ID
 | GL.iNet Comet GL-RM1      | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks          |
 | GL.iNet Comet Pro GL-RM10 | `glinet-comet` | Lokale KVMD-API des Hersteller-Forks          |
 
-JetKVM nutzt natives WebRTC und einen dauerhaften FFmpeg-Prozess für H.264 → JPEG. Die npm-Referenzinstallation liefert den Helfer über `ffmpeg-static`; native Pakete enthalten ihn in den Profilen `media` und `full`. Ein eigenes Binary kann über `KVMHELM_FFMPEG` gewählt werden. PiKVM und Comet benötigen keinen Videodecoder. Details: [Gerätetreiber](docs/device-drivers.md).
+JetKVM nutzt natives WebRTC und einen dauerhaften FFmpeg-Prozess für H.264 → JPEG. Native Pakete enthalten den Helfer in den Profilen `media` und `full`. Ein eigenes Binary kann über `KVMHELM_FFMPEG` gewählt werden. PiKVM und Comet benötigen keinen Videodecoder. Details: [Gerätetreiber](docs/device-drivers.md).
 
 ## Oberfläche
 
@@ -53,12 +67,22 @@ Monochrome Oberfläche mit Dark- und Light-Mode, kompakte Bedienelemente und unv
 
 ```sh
 npm run build
+npm run build:native
 npm run dev
 ```
 
-Für synthetische Testquellen kann ausdrücklich `node dist/server/cli.js demo` aufgerufen werden. Dies ist ein optionaler Entwicklungsbefehl und kein Installationsschritt.
+Für synthetische Testquellen kann ausdrücklich `npm run cli -- demo` aufgerufen werden. Dies ist ein optionaler Entwicklungsbefehl und kein Installationsschritt.
 
-Der Backend-Entwicklungsstart lädt TypeScript; die Worker verwenden die zuletzt gebauten JS-Dateien. Nach Workeränderungen erneut bauen. Für Vue-HMR in einem zweiten Terminal `npx vite` starten und `http://127.0.0.1:5173` verwenden. Produktionsstart liefert ausschließlich den vorab gebauten Browserbundle aus.
+`npm run build` baut ausschließlich die Vue-Oberfläche. `npm run build:native`
+baut das Releasebinary mit eingebetteten Assets; `npm start` und `npm run cli -- …`
+verwenden dieses Binary unter `target/release`. `npm run dev` baut und startet
+den nativen Debugdienst; nach Rust-Änderungen neu starten. Für Vue-HMR in einem
+zweiten Terminal `npx vite` starten und `http://127.0.0.1:5173` verwenden.
+Nach UI-Änderungen für den eingebetteten Betrieb zuerst den Browserbundle und
+dann Rust neu bauen. `npm start`, `npm run cli` und `npm run setup` laden eine
+vorhandene `.env`; direkte Binaryaufrufe und `npm run dev` benötigen exportierte
+Variablen oder Flags. npm ist hier ein Entwicklungswerkzeug. Deployed wird das
+native Paket ohne `node_modules`.
 
 ```sh
 npm run check
@@ -66,7 +90,21 @@ npx playwright install chromium # nur für die WebRTC-Testgegenstelle
 npm test
 ```
 
-Die fokussierten Tests prüfen Steuerungsarbitrierung, Wiederholungen, ungültige Ansichten, Berechtigungen, Präferenzrevisionen, Layouts, beide MCP-Transporte und den PiKVM-Treiber gegen einen lokalen Protokollserver. Nach lokalem Bootstrap/Demo/Dienststart lässt sich der Browsercheck mit `node scripts/ui-smoke.mjs` wiederholen; dafür einmal `npx playwright install chromium` ausführen. Der Prüfstand steht in `docs/verification.md`. Der isolierte Check `node scripts/ui-layout.mjs` prüft eine leere Installation, Reihenfolge, Farbschemata und dauerhafte Browseranmeldung. GitHub Actions führt `.github/workflows/ci.yml` bei Push und Pull Request aus: Build, Regressionstests und isolierte Browserprüfung unter Windows, Linux und macOS sowie ein Docker-Build.
+Die nativen Tests prüfen Steuerungsarbitrierung, Replay, Berechtigungen,
+Persistenz, Layouts, Netzwerkgrenzen und API-Verträge gegen lokale Gegenstellen.
+`npm run test:web` erhält die vier vorhandenen Queue-Regressionen gegen den
+aktuellen Browsercode; `npm test` führt sie vor den nativen Tests aus.
+`node scripts/ui-layout.mjs` verwendet standardmäßig das native Debugbinary;
+`KVMHELM_TEST_BINARY` wählt ein anderes Binary. Die weiteren
+`native-*-interop.mjs`-Fixtures prüfen MCP, Browser, WebRTC/Audio und Plugins.
+Für Vergleiche und Migration einmal `npm run prepare:reference` ausführen:
+Dies baut den echten Originalcommit `b40b2dd` in `target/reference` mit eigener
+Installation. `npm run test:reference` führt dort alle 38 Originaltests aus;
+`cargo test --locked --test legacy_compat -- --ignored` prüft den Sprachvergleich.
+Die Referenz wird niemals automatisch als Produktivfallback gestartet.
+Prüfstand und Plattformgrenzen stehen in [verification](docs/verification.md)
+und der [Prüfmatrix](docs/native-platforms.md). Die CI beschreibt Windows-,
+Linux-, macOS- und Dockerprüfungen; ein konfigurierter Job belegt keinen Lauf.
 
 ## Computer Use über MCP
 
@@ -84,8 +122,8 @@ Alternativ mit explizitem Secretpfad, insbesondere für GUI-Starts ohne Shell-Um
 
 ```toml
 [mcp_servers.kvmhelm]
-command = "node"
-args = ["/absolute/path/KVMHelm/dist/server/cli.js", "mcp", "--transport", "stdio", "--pat-file", "/protected/path/codex.pat"]
+command = "/absolute/path/kvmhelm"
+args = ["mcp", "--transport", "stdio", "--pat-file", "/protected/path/codex.pat"]
 ```
 
 Unter Windows absolute Windows-Pfade entsprechend TOML-escaped eintragen. Startverzeichnis ist für die Bridge unerheblich. Der laufende Daemon wird über authentifiziertes Loopback-HTTP angesprochen; Named Pipes/Unix-Sockets sind kein zweiter implementierter Zugang.
@@ -93,7 +131,7 @@ Unter Windows absolute Windows-Pfade entsprechend TOML-escaped eintragen. Startv
 Ein geeigneter begrenzter PAT:
 
 ```sh
-node dist/server/cli.js token create --name codex --device DEVICE_ID --scope devices:read --scope video:read --scope input:write --out /protected/path/codex.pat
+./kvmhelm token create --name codex --device DEVICE_ID --scope devices:read --scope video:read --scope input:write --out /protected/path/codex.pat
 ```
 
 Beobachten → Control anfordern → **erneut beobachten** → kurze Aktionen → beobachten. Pixel beziehen sich auf das gelieferte Bild, nicht auf CSS. `reference` enthält `frame_id`, `view_id`, `input_revision`. `request_id` bei unklarer Antwort niemals mit verändertem Inhalt wiederverwenden. Ein physisches HID-ACK beweist keinen Anwendungserfolg. Bildschirmtexte dürfen keine Berechtigungen oder Administrationsziele festlegen.
@@ -108,7 +146,7 @@ Pro KVM gilt eine konfigurierbare Minimum Action Latency (Standard 30 ms) vor de
 - Ganze Batches vorab validiert; pro Eingabe erneut Control-Generation geprüft.
 - Vollständige JPEG-/PNG-Frames im RAM; keine temporären Bilddateien. PiKVM/Comet liefern JPEG direkt, JetKVM benötigt H.264-Decoding und JPEG-Encoding.
 - Geteilte Snapshot-Anfragen und ein optionaler MJPEG-Stream pro Gerät. Der Benchmark vergleicht den warmen Snapshot-Abruf mit dem Empfang vollständiger Streambilder und wählt mit 20 % Hysterese.
-- SQLite und PiKVM-Audio in eigenen Workern, JetKVM-Videodecoding in einem eigenen FFmpeg-Prozess. Browserdarstellung wartet nicht auf Datenbankzugriffe.
+- SQLite auf einem eigenen Thread, Audio/WebRTC in begrenzten nativen Aufgaben, JetKVM-Videodecoding in einem eigenen FFmpeg-Prozess. Browserdarstellung wartet nicht auf Datenbankzugriffe.
 - Begrenzte HID-Queue, Verbraucher- und Replaypuffer. Überlast verwirft alte Medienausgaben, keine HID-Aufträge stillschweigend.
 
 Ein Empfangszeitstempel ist kein Hardware-Capture-Beweis. PiKVM-Beobachtungen mit unbekanntem Capture-Zeitpunkt melden `receive_time_only` und nach Aktionen `unverified`. Ein unverändertes Bild bleibt eine gültige neue Beobachtung. Diagnose unterscheidet Signalverlust, Verbindungsfehler und gealtertes Bild.
@@ -126,7 +164,7 @@ Generische, vollständig vertrauenswürdige Plugins werden über `kvmhelm.plugin
 Loopback-HTTP ist die ausdrückliche lokale POC-Ausnahme. LAN-Bindung verlangt TLS:
 
 ```sh
-node dist/server/cli.js serve --host 192.168.1.10 --cert /tls/server.crt --key /tls/server.key
+./kvmhelm serve --host 192.168.1.10 --cert /tls/server.crt --key /tls/server.key
 ```
 
 Zusätzliche tatsächlich verwendete Origins mit `--origin https://hostname:8765` freigeben. Browser-Mikrofone benötigen einen vertrauenswürdigen sicheren Kontext. Kein öffentliches Publishing, Relay oder eingebauter TURN-Server.

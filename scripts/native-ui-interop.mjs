@@ -1,3 +1,4 @@
+import { referencePath, referenceRoot } from "./reference.mjs";
 // The unchanged Vue bundle against isolated native and reference daemons.
 // Only explicitly created simulators receive input; no hardware/capture access.
 import assert from "node:assert/strict";
@@ -18,7 +19,7 @@ const dir = await mkdtemp(join(tmpdir(), "kvmhelm-native-ui-"));
 const executable = reference
   ? process.execPath
   : join(dir, process.platform === "win32" ? "kvmhelm.exe" : "kvmhelm");
-const prefix = reference ? [resolve("dist/server/cli.js")] : [];
+const prefix = reference ? [referencePath("dist/server/cli.js")] : [];
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([key]) => !key.toUpperCase().startsWith("KVMHELM_"),
@@ -36,7 +37,7 @@ Object.assign(env, {
   KVMHELM_REPLAY_MB: "0.25",
 });
 const options = {
-  cwd: reference ? process.cwd() : dir,
+  cwd: reference ? referenceRoot : dir,
   env,
   windowsHide: true,
 };

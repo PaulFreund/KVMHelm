@@ -24,7 +24,7 @@ use std::{
 struct TraceSink(Mutex<Vec<Value>>);
 
 #[test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 fn plugin_manifests_and_panels_match_the_actual_typescript_host() {
     let cases: Vec<Value> = serde_json::from_str(&legacy("plugin-contracts", None)).unwrap();
     for case in cases {
@@ -47,7 +47,7 @@ fn plugin_manifests_and_panels_match_the_actual_typescript_host() {
 }
 
 #[test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 fn h264_reassembly_matches_original_loss_wrap_parameters_and_fragments() {
     use kvmhelm::drivers::h264::H264Assembler;
     let cases: Vec<Value> = serde_json::from_str(&legacy("h264", None)).unwrap();
@@ -78,13 +78,13 @@ fn h264_reassembly_matches_original_loss_wrap_parameters_and_fragments() {
 }
 
 #[test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 fn advertised_mcp_contract_matches_the_original_sdk_registration() {
     let expected: Value = serde_json::from_str(&legacy("mcp-contract", None)).unwrap();
     assert_eq!(kvmhelm::mcp::contract(), &expected);
 }
 #[test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 fn auth_rate_keys_match_the_original_ipv6_subnet_and_mapped_ipv4_policy() {
     let cases: Vec<Value> = serde_json::from_str(&legacy("rate-keys", None)).unwrap();
     for case in cases {
@@ -114,7 +114,7 @@ impl HidTransport for TraceSink {
 }
 
 #[tokio::test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 async fn actual_dom_hid_event_sequences_match_for_layouts_drag_scroll_and_rounding() {
     let cases: Vec<Value> = serde_json::from_str(&legacy("hid", None)).unwrap();
     for case in cases {
@@ -154,7 +154,7 @@ fn legacy(command: &str, dir: Option<&Path>) -> String {
     }
     let output = process
         .output()
-        .expect("Node 24 and npm run build required for legacy comparison");
+        .expect("Node 24 and npm run prepare:reference required for legacy comparison");
     assert!(
         output.status.success(),
         "legacy fixture failed: {}",
@@ -164,7 +164,7 @@ fn legacy(command: &str, dir: Option<&Path>) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 async fn actual_typescript_and_rust_read_each_others_database_secrets_and_tokens() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(legacy("prepare", Some(dir.path())), "ok");
@@ -230,7 +230,7 @@ async fn actual_typescript_and_rust_read_each_others_database_secrets_and_tokens
 }
 
 #[test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 fn strict_schemas_and_defaults_match_the_actual_zod_implementation() {
     let cases: Vec<Value> = serde_json::from_str(&legacy("contracts", None)).unwrap();
     for (index, case) in cases.iter().enumerate() {
@@ -267,7 +267,7 @@ fn strict_schemas_and_defaults_match_the_actual_zod_implementation() {
 }
 
 #[test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 fn all_reference_text_mappings_key_aliases_and_usb_usages_match() {
     let reference: Value = serde_json::from_str(&legacy("mapping", None)).unwrap();
     for case in reference["text"].as_array().unwrap() {
@@ -305,7 +305,7 @@ fn all_reference_text_mappings_key_aliases_and_usb_usages_match() {
 }
 
 #[test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 fn network_policy_matches_reference_boundaries() {
     let cases: Vec<Value> = serde_json::from_str(&legacy("network", None)).unwrap();
     for case in cases {
@@ -317,7 +317,7 @@ fn network_policy_matches_reference_boundaries() {
 }
 
 #[tokio::test]
-#[ignore = "requires Node 24, npm dependencies and npm run build"]
+#[ignore = "requires Node 24 and npm run prepare:reference"]
 async fn native_session_action_replay_and_error_transcripts_match_the_original_core() {
     fn summary(r: &ToolResult) -> Value {
         let b = &r.body;

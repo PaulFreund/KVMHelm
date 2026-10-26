@@ -10,11 +10,13 @@ physischen Geräte und verwendet kein echtes Mikrofon.
 Voraussetzungen: Windows x64, PowerShell 7 (`pwsh.exe`), die vorhandenen
 npm-Testabhängigkeiten einschließlich Playwright/Chromium und ein entpacktes,
 mit `verify.ps1` geprüftes Full-Paket aus einem sauberen Gitstand.
-Der TypeScript-Server wird aus den unveränderten Verzeichnissen `server`,
-`shared` und `web` gebaut; der Controller weist Abweichungen zu `b40b2dd` zurück.
+Der TypeScript-Server wird mit `npm run prepare:reference` aus dem vollständigen
+Originalcommit `b40b2dde246533a25a18148a6b59faced676d9ba` in `target/reference`
+gebaut. Quellen und kompilierte Ausgaben werden vor Vergleichen auf Änderungen
+geprüft; der aktuelle Produktionsquellbaum enthält keinen zweiten Server.
 
 ```powershell
-npx --no-install tsc -p tsconfig.server.json
+npm run prepare:reference
 node scripts/check-process-sampler.mjs
 node scripts/measure-native-runtime.mjs --binary C:/package/kvmhelm.exe --helpers C:/package --out target/runtime-measurements/my-run --seconds 20 --warmup 5 --rounds 2
 ```
@@ -40,6 +42,10 @@ alle zwölf Gruppenläufe zusammen. Ein unterbrochener Lauf kann im selben
 Ausgabeordner nur mit identischen Eingaben fortgesetzt werden. Fehlgeschlagene
 Gruppen werden nicht als Ergebnisse übernommen. `target` bleibt lokal und
 ignoriert; keine Buildartefakte sind Teil dieses Berichts.
+
+Die gespeicherte Messung unten entstand vor dieser Isolierung. Ihre ursprünglichen
+Quell-/Harnesshashes und Messwerte bleiben unverändert. Für eine Wiederholung mit
+dem umgestellten Harness einen neuen Ausgabeordner verwenden.
 
 ## Last und Zähler
 

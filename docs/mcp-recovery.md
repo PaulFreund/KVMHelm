@@ -4,11 +4,11 @@
 
 The existing native Codex task returned HTTP 404 `Unknown MCP session` after the gateway was restarted for the PiKVM/TLS fix. The stdio process remained alive, but forwarded its old Streamable HTTP session ID forever. The HTTP daemon itself was healthy and newly initialized clients worked. A one-hour idle transport expiry can trigger the same fault. This is distinct from a PiKVM being offline.
 
-The ad hoc SDK fallback inside the task's node REPL also failed; its environment and initialization errors are not evidence that the gateway was down. Use the supported Node CLI bridge for this integration.
+The ad hoc SDK fallback inside the task's node REPL also failed; its environment and initialization errors are not evidence that the gateway was down. Use the supported native CLI bridge for this integration.
 
 ## Fix
 
-`server/mcp-upstream.ts` keeps the host's stdio transport separate from the replaceable HTTP client. Unknown-session responses and connection failures invalidate the upstream client. Reconnection is shared across concurrent callers, bounded by an initialization timeout, and reads the protected PAT file again. `tools/list` and `list_computers` can retry once. Input, control, open/close, and screenshot operations are never automatically replayed after transport failure; the host receives structured `MCP_CONNECTION_LOST` instructions to list, reopen and observe. Device session IDs, leases and image references are deliberately not restored across daemon restarts. A response lost after input may mean input already executed.
+`native/src/mcp_bridge.rs` (ported from the original `server/mcp-upstream.ts`) keeps the host's stdio transport separate from the replaceable HTTP client. Unknown-session responses and connection failures invalidate the upstream client. Reconnection is shared across concurrent callers, bounded by an initialization timeout, and reads the protected PAT file again. `tools/list` and `list_computers` can retry once. Input, control, open/close, and screenshot operations are never automatically replayed after transport failure; the host receives structured `MCP_CONNECTION_LOST` instructions to list, reopen and observe. Device session IDs, leases and image references are deliberately not restored across daemon restarts. A response lost after input may mean input already executed.
 
 The interop regression leaves the same stdio process connected while the HTTP server is restarted twice and temporarily unavailable. It verifies no automatic control replay, automatic read recovery, fresh images, and a surviving downstream connection. No real hardware inputs are used.
 

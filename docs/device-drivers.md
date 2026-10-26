@@ -1,8 +1,8 @@
 # Gerätetreiber
 
-Windows, macOS und Linux verwenden denselben Node.js-Daemon und dieselben API-/MCP-Verträge. `npm run setup` installiert die gepinnten Abhängigkeiten einschließlich FFmpeg, baut die Anwendung und legt bei fehlender Eigentümer-PAT-Datei einen Token an. Danach startet `npm start` den Server. Ein erneutes Setup erhält Konfiguration und vorhandene Tokens. Es werden keine Geräte angelegt.
+Der Rust-Daemon erhält dieselben API-/MCP-Verträge für Windows, Linux und macOS. Tatsächlich geprüfte Hosts und verbleibende Grenzen stehen in der [Plattformmatrix](native-platforms.md). Der native Core samt eingebetteter Oberfläche benötigt kein Node/npm. Im Quellcheckout installiert `npm run setup` die gepinnten Buildabhängigkeiten, baut Vue und Rust und legt bei fehlender Eigentümer-PAT-Datei einen Token an. Danach startet `npm start` das native Releasebinary. Ein erneutes Setup erhält Konfiguration und vorhandene Tokens. Es werden keine Geräte angelegt.
 
-Voraussetzung ist Node.js 24.18 oder neuer innerhalb der Version 24 sowie Git für den Checkout. Die vorgefertigten FFmpeg-Binaries unterstützen Windows x64, macOS x64/arm64 und Linux x64/arm64. Für andere Architekturen oder eine eigene FFmpeg-Version kann `KVMHELM_FFMPEG` auf ein ausführbares Binary zeigen. Der Pfad darf Leerzeichen enthalten. Installationsskripte müssen beim Installieren der npm-Abhängigkeiten zugelassen sein. Downloads werden nur bei der Installation benötigt, nicht für den lokalen Gerätebetrieb.
+Der Quellbau benötigt Git, Node.js 24.18 oder neuer innerhalb Version 24, Rust 1.99.1 und die dokumentierten C/C++-/CMake-Werkzeuge. JetKVM-Video braucht zusätzlich FFmpeg. Die [nativen Paketprofile](native-packaging.md) `media` und `full` enthalten einen gepinnten Helfer für Windows x64, Linux x64 beziehungsweise macOS x64/arm64; `full` ergänzt Node ausschließlich für bestehende Plugins. Ein eigenes FFmpeg kann über `KVMHELM_FFMPEG` gewählt werden; der Pfad darf Leerzeichen enthalten. Downloads gehören zum Paket-/Buildvorgang, nicht zum lokalen Gerätebetrieb. Das normale npm-Setup installiert keinen FFmpeg-Helfer mehr.
 
 ## JetKVM
 

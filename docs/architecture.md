@@ -2,7 +2,7 @@
 
 ## Komponenten
 
-`shared/contracts.ts` ist die versionierte Grenze für Geräte, Capabilities, Actions, Frames, Audio und Treiber. `server/core.ts` besitzt Sessions, Leases, Generationen und Action-Journale. `server/media.ts` besitzt den neuesten vollständigen Frame und Consumerreferenzen. `server/drivers/pikvm.ts` enthält ausschließlich PiKVM-Semantik. `server/server.ts` und `server/mcp.ts` adaptieren denselben Core. Der stdio-CLI-Modus verbindet sich als MCP-Client zum existierenden Daemon. `server/store-worker.ts` kapselt SQLite. `server/audio-worker.ts` kapselt Janus/WebRTC/Opus.
+`native/src/contracts.rs` validiert Geräte, Capabilities, Actions und Toolaufrufe; `shared/contracts.ts` erhält die Vue-Verträge. `native/src/core.rs` besitzt Sessions, Leases, Generationen und Action-Journale. `native/src/media.rs` besitzt den neuesten vollständigen Frame und Consumerreferenzen. Herstelleradapter liegen unter `native/src/drivers`. `server.rs` und `mcp.rs` adaptieren denselben Core; `mcp_bridge.rs` verbindet stdio mit dem existierenden Daemon. `store.rs` kapselt SQLite auf einem eigenen Thread, `drivers/janus.rs` Janus/WebRTC/Opus. Bestehende Plugins laufen über den optionalen Node-Broker; der Kerndienst und eingebettete Web-Assets benötigen kein Node. Der frühere TypeScript-Server ist ausschließlich als gepinnte Testreferenz aus der Git-Historie verfügbar; siehe [Portierung](rust-port.md).
 
 ## Geräteadapter
 

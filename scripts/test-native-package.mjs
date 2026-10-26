@@ -1,3 +1,4 @@
+import { referenceImport } from "./reference.mjs";
 // Actual extracted release, original SQLite/Secrets/Auth/Core, optional helpers.
 // All state and input belong to this simulator fixture. Never installs a service.
 import assert from "node:assert/strict";
@@ -46,11 +47,11 @@ function command(program, args, options = {}) {
 }
 
 async function legacy(mode, directory) {
-  const { Store, Secrets } = await import("../dist/server/store.js");
-  const { Auth } = await import("../dist/server/auth.js");
-  const { Core } = await import("../dist/server/core.js");
-  const { scopes } = await import("../dist/shared/contracts.js");
-  const { manifestSchema } = await import("../dist/server/plugins.js");
+  const { Store, Secrets } = await referenceImport("dist/server/store.js");
+  const { Auth } = await referenceImport("dist/server/auth.js");
+  const { Core } = await referenceImport("dist/server/core.js");
+  const { scopes } = await referenceImport("dist/shared/contracts.js");
+  const { manifestSchema } = await referenceImport("dist/server/plugins.js");
   await mkdir(join(directory, "data"), { recursive: true, mode: 0o700 });
   const store = new Store(join(directory, "data"));
   const secrets = await Secrets.open(join(directory, "secrets"));

@@ -2,6 +2,11 @@
 
 Diese Datei trennt ausgeführte synthetische Prüfungen von ausstehenden Hardware-/Hostabnahmen. Der POC ist kein plattformübergreifend abgenommenes Release.
 
+Der aktuelle Rust-Prüfstand steht in [native-platforms.md](native-platforms.md),
+[Funktionszuordnung](rust-port.md) und [Windows-Messung](native-performance.md).
+Der folgende Abschnitt dokumentiert die historische TypeScript-Referenz; deren
+Befehle laufen heute über `npm run test:reference` im isolierten Originalstand.
+
 ## Ausgeführt am 7. September 2026
 
 Windows, Node.js 24.18.0: Produktionsbuild erfolgreich. Zehn fokussierte Tests erfolgreich, darunter HTTP-/stdio-MCP mit echten PNG-Image-Blöcken und gemeinsamer Lease, PiKVM und beide Comet-Modelle gegen lokale HTTP-/WebSocket-Protokollserver sowie JetKVM mit nativem WebRTC, FFmpeg-Bildern, Audio, HID und Wiederverbindung. Chromium wird für den JetKVM-Test als Gegenstelle verwendet, nicht vom Server. Browserprüfung: Login, Bild, Control-acquire, Klick, Videowand und Wiederherstellung nach Reload erfolgreich; keine JavaScript-Seitenfehler. Screenshots dieser ausschließlich synthetischen QA liegen lokal im ignorierten `.kvmhelm/qa`.

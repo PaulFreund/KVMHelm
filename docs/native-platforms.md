@@ -6,6 +6,33 @@ sind getrennte Ergebnisse. Die [Paketierungsanleitung](native-packaging.md)
 beschreibt Installation, Migration und Rollback; der
 [Windows-Messbericht](native-performance.md) enthält die Ressourcenvergleiche.
 
+## Quellcheckout und Standardstart
+
+Der Quellcheckout verwendet nun Rust als Standard: `npm run build` baut Vue,
+`npm run build:native` das native Releasebinary; `npm start` und
+`npm run cli -- …` verwenden `target/release/kvmhelm`. Die npm-Aufrufe laden
+weiterhin eine lokale `.env`. Native Pakete werden unmittelbar gestartet und
+benötigen diese Entwicklungswerkzeuge nicht.
+
+Die Umstellung ist mit isolierten Startverzeichnissen und Daten geprüft:
+`.env`-Bootstrap ohne Tokenausgabe, leere Geräteliste, Rust-Diagnose,
+Flag-Vorrang und CLI-Fehlercodes. Unter Windows beenden echte Ctrl+C-Ereignisse
+in einer eigenen versteckten Konsole Wrapper und Rust-Kindprozess mit Exitcode 0;
+zwei Start-/Stopzyklen öffnen denselben Store erneut. Unter Linux wartet der
+Wrapper bei SIGTERM auf das geordnete native Ende. Das ist ein Konsolen-/Prozess-
+nachweis und keine zusätzliche SCM-/launchd-Abnahme.
+
+Die gepinnte Originalreferenz liegt ausschließlich in `target/reference` mit
+eigenem Lockfile und allen 38 Originaltests; Quellen werden gegen Git-Blobs und
+kompilierte Ausgaben gegen SHA-256 geprüft. Eine gezielte Veränderung einer
+kompilierten Referenzdatei wird vor Benutzung abgewiesen. Alle 38 Originaltests,
+zehn Sprachvergleiche unter Windows/Linux sowie die vier erhaltenen aktuellen
+Vue-Queue-Tests bestehen. Beim ersten umgestellten MCP-Referenzlauf trat ein
+Starttimeout auf; der Aufruf verwendet nun ausdrücklich das Referenzverzeichnis
+und besteht einschließlich zweier Wiederanläufe. Der aktuelle npm-Graph enthält
+ausschließlich Build-/Testabhängigkeiten und 31 Lockeinträge weniger; die
+verbliebenen Paketversionen sind unverändert.
+
 ## Umgebung und Prüfbefehle
 
 Die Linux-Prüfung auf ENVY verwendet Ubuntu 24.04 in WSL2, x86_64,
@@ -22,6 +49,7 @@ Auf einem eingerichteten Linux-Buildhost:
 ```sh
 npm ci
 npm run build
+npm run prepare:reference # ausschließlich für Originalvergleiche/Migration
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --features embedded-web -- -D warnings
 cargo test --locked --features embedded-web
