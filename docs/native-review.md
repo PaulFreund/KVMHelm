@@ -183,9 +183,16 @@ wurde noch nicht durch eine Konfigurationsänderung vorweggenommen.
 
 Der Testdaemon wurde mit vorhandenen Daten/Secrets nach privater Sicherung
 aktualisiert. Loopback und LAN-TLS, Readiness, Web und Anmeldung bestehen;
-ein bereits geöffneter Browser benötigt neue Assets durch Neuladen. Der
-abschließende Windows-Releasebau wird nach seinem tatsächlichen Ergebnis
-ergänzt. Diese Nacharbeit ist kein neuer Ressourcenmesslauf und
+ein bereits geöffneter Browser benötigt neue Assets durch Neuladen.
+
+Der zusätzlich einmal freigegebene Windows-Release-Lauf aus dem sauberen
+Stand `87be963` wurde auf AMBOSS mit einem Cargo-Job begonnen. Der Remote-Aufruf
+meldete nach rund zwei Minuten `native_deadline_exceeded`. Der anschließende
+Abgleich fand keine eigenen Buildprozesse, kein Releasebinary und kein Paket;
+damit ist der abschließende Releasebau nicht bestanden. Es wurde kein
+Ersatzbuild gestartet. Der Testdienst verwendet weiter das geprüfte Debugbinary
+aus `4ead283`; sein nativer und Web-Code entspricht `87be963`.
+Diese Nacharbeit ist kein neuer Ressourcenmesslauf und
 keine neue macOS-/Dienst-/Containerabnahme.
 
 ## Laufzeitmessung
