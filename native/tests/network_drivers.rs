@@ -73,6 +73,7 @@ struct State {
     snapshot_calls: AtomicUsize,
     warmup: AtomicUsize,
     source_offline: AtomicBool,
+    hid_online: AtomicBool,
     status: AtomicUsize,
     auth_status: AtomicUsize,
     body: Mutex<Vec<u8>>,
@@ -124,6 +125,7 @@ impl Fixture {
             snapshot_calls: AtomicUsize::new(0),
             warmup: AtomicUsize::new(0),
             source_offline: AtomicBool::new(false),
+            hid_online: AtomicBool::new(true),
             status: AtomicUsize::new(200),
             auth_status: AtomicUsize::new(200),
             body: Mutex::new(image.clone()),
@@ -301,7 +303,7 @@ async fn handler(
         );
         *response.body_mut() = StreamBody::new(stream).boxed_unsync();
     } else {
-        *response.body_mut()=full(json!({"ok":true,"result":if path=="/api/hid" {json!({"keyboard":{"online":true},"mouse":{"absolute":true}})} else {json!({})}}).to_string());
+        *response.body_mut()=full(json!({"ok":true,"result":if path=="/api/hid" {json!({"keyboard":{"online":state.hid_online.load(Ordering::Acquire)},"mouse":{"absolute":true}})} else {json!({})}}).to_string());
     }
     Ok(response)
 }
@@ -479,58 +481,77 @@ async fn snapshot_warmup_retries_only_503_and_cancellation_stops_read_retries() 
 }
 
 #[tokio::test]
-async fn a_sleeping_pikvm_source_keeps_hid_connected_and_recovers_without_reconnecting() {
-    let f = Fixture::new(false).await;
-    let driver = f.driver("PiKVM v4");
-    driver.connect(CancellationToken::new()).await.unwrap();
-    f.state.status.store(503, Ordering::Release);
-    f.state.source_offline.store(true, Ordering::Release);
-    assert_eq!(
+async fn an_explicit_wake_reaches_offline_hid_on_pikvm_and_both_comet_models() {
+    for model in ["PiKVM v4", "GL-RM1 (Comet)", "GL-RM10 (Comet Pro)"] {
+        let f = Fixture::new(false).await;
+        f.state.hid_online.store(false, Ordering::Release);
+        let driver = f.driver(model);
+        driver.connect(CancellationToken::new()).await.unwrap();
+        f.state.status.store(503, Ordering::Release);
+        f.state.source_offline.store(true, Ordering::Release);
+        assert_eq!(
+            driver
+                .snapshot(CancellationToken::new())
+                .await
+                .err()
+                .unwrap()
+                .code,
+            "NO_SIGNAL"
+        );
+        assert_eq!(
+            driver.capabilities().await.unwrap().video.signal,
+            Signal::Absent
+        );
+        assert_eq!(f.state.snapshot_calls.load(Ordering::Acquire), 1);
+        assert!(!driver.capabilities().await.unwrap().keyboard.hid);
+        assert_eq!(
+            driver
+                .execute(
+                    &action(json!({"type":"keypress","keys":["SHIFT"]})),
+                    &context()
+                )
+                .await
+                .err()
+                .unwrap()
+                .code,
+            "UNSUPPORTED_ACTION"
+        );
         driver
-            .snapshot(CancellationToken::new())
+            .wake(&ActionContext {
+                width: 0,
+                height: 0,
+                ..context()
+            })
             .await
-            .err()
-            .unwrap()
-            .code,
-        "NO_SIGNAL"
-    );
-    assert_eq!(
-        driver.capabilities().await.unwrap().video.signal,
-        Signal::Absent
-    );
-    assert_eq!(f.state.snapshot_calls.load(Ordering::Acquire), 1);
-    driver
-        .execute(
-            &action(json!({"type":"keypress","keys":["SHIFT"]})),
-            &context(),
-        )
-        .await
-        .unwrap();
-    f.state.status.store(200, Ordering::Release);
-    f.state.source_offline.store(false, Ordering::Release);
-    assert_eq!(
-        driver
-            .snapshot(CancellationToken::new())
-            .await
-            .unwrap()
-            .signal,
-        Signal::Present
-    );
-    assert!(driver.capabilities().await.unwrap().keyboard.hid);
-    assert_eq!(f.state.sockets.load(Ordering::Acquire), 1);
-    driver.disconnect().await.unwrap();
-    let events = f.state.events.lock().unwrap().clone();
-    assert!(
-        events
-            .iter()
-            .any(|event| event["event"]["key"] == "ShiftLeft" && event["event"]["state"] == true)
-    );
-    assert!(
-        events
-            .iter()
-            .any(|event| event["event"]["key"] == "ShiftLeft" && event["event"]["state"] == false)
-    );
-    f.close().await;
+            .unwrap();
+        f.state.status.store(200, Ordering::Release);
+        f.state.hid_online.store(true, Ordering::Release);
+        f.state.source_offline.store(false, Ordering::Release);
+        assert_eq!(
+            driver
+                .snapshot(CancellationToken::new())
+                .await
+                .unwrap()
+                .signal,
+            Signal::Present
+        );
+        assert!(driver.capabilities().await.unwrap().keyboard.hid);
+        assert_eq!(f.state.sockets.load(Ordering::Acquire), 1);
+        driver.disconnect().await.unwrap();
+        let events = f.state.events.lock().unwrap().clone();
+        assert!(
+            events.iter().any(
+                |event| event["event"]["key"] == "ShiftLeft" && event["event"]["state"] == true
+            )
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event["event"]["key"] == "ShiftLeft"
+                    && event["event"]["state"] == false)
+        );
+        f.close().await;
+    }
 }
 
 #[tokio::test]

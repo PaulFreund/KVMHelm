@@ -22,6 +22,12 @@ use tokio_util::sync::CancellationToken;
 pub type VideoStream = Pin<Box<dyn Stream<Item = Result<DriverFrame>> + Send>>;
 pub type AudioStream = Pin<Box<dyn Stream<Item = Result<crate::audio::AudioChunk>> + Send>>;
 
+fn wake_action() -> Action {
+    Action::Keypress {
+        keys: vec!["SHIFT".into()],
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum DriverEvent {
     Disconnected,
@@ -97,5 +103,10 @@ pub trait KvmDriver: Send + Sync {
     }
     fn validate(&self, actions: &[Action], width: u32, height: u32) -> Result<()>;
     async fn execute(&self, action: &Action, context: &ActionContext) -> Result<Delivery>;
+    /// Fixed modifier tap for the Core's explicit, leased wake operation. A
+    /// sleeping USB host can report HID offline while still accepting wake.
+    async fn wake(&self, context: &ActionContext) -> Result<Delivery> {
+        self.execute(&wake_action(), context).await
+    }
     async fn release_all_inputs(&self) -> Result<()>;
 }

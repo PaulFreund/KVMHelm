@@ -1682,12 +1682,9 @@ impl Core {
             context.check()?;
             runtime.media.bump_input_revision();
             let _completed = InputFinished(runtime.clone());
-            let action = Action::Keypress {
-                keys: vec!["SHIFT".into()],
-            };
             tokio::select! {biased;
                 _=cancellation.cancelled()=>Err(GatewayError::new("LEASE_REVOKED")),
-                result=tokio::time::timeout(Duration::from_secs(5), AssertUnwindSafe(runtime.driver.execute(&action, &context)).catch_unwind())=>match result {
+                result=tokio::time::timeout(Duration::from_secs(5), AssertUnwindSafe(runtime.driver.wake(&context)).catch_unwind())=>match result {
                     Ok(Ok(result))=>result.map(|_|()), Ok(Err(_))|Err(_)=>Err(unknown())
                 }
             }

@@ -475,6 +475,18 @@ impl KvmDriver for PiKvmDriver {
             .execute(self, action, context, self.device.keyboard_layout)
             .await
     }
+    async fn wake(&self, context: &ActionContext) -> Result<Delivery> {
+        // Only the fixed wake tap may bypass the sleeping host's online bit.
+        // The HID sender still checks lease/cancellation and releases the key.
+        self.hid
+            .execute(
+                self,
+                &super::wake_action(),
+                context,
+                self.device.keyboard_layout,
+            )
+            .await
+    }
     async fn release_all_inputs(&self) -> Result<()> {
         if let Some(audio) = self.audio.lock().unwrap().as_ref() {
             audio.stop_microphone();
@@ -585,6 +597,9 @@ impl KvmDriver for CometDriver {
     }
     async fn execute(&self, action: &Action, context: &ActionContext) -> Result<Delivery> {
         self.0.execute(action, context).await
+    }
+    async fn wake(&self, context: &ActionContext) -> Result<Delivery> {
+        self.0.wake(context).await
     }
     async fn release_all_inputs(&self) -> Result<()> {
         self.0.release_all_inputs().await
