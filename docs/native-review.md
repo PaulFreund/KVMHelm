@@ -185,13 +185,37 @@ Der Testdaemon wurde mit vorhandenen Daten/Secrets nach privater Sicherung
 aktualisiert. Loopback und LAN-TLS, Readiness, Web und Anmeldung bestehen;
 ein bereits geöffneter Browser benötigt neue Assets durch Neuladen.
 
-Der zusätzlich einmal freigegebene Windows-Release-Lauf aus dem sauberen
-Stand `87be963` wurde auf AMBOSS mit einem Cargo-Job begonnen. Der Remote-Aufruf
+Der erste Windows-Release-Lauf aus dem sauberen Stand `87be963` wurde auf
+AMBOSS mit einem Cargo-Job begonnen. Der Remote-Aufruf
 meldete nach rund zwei Minuten `native_deadline_exceeded`. Der anschließende
 Abgleich fand keine eigenen Buildprozesse, kein Releasebinary und kein Paket;
-damit ist der abschließende Releasebau nicht bestanden. Es wurde kein
-Ersatzbuild gestartet. Der Testdienst verwendet weiter das geprüfte Debugbinary
-aus `4ead283`; sein nativer und Web-Code entspricht `87be963`.
+dieser Versuch ist kein bestandener Paketnachweis. Es wurde kein automatischer
+Ersatzbuild gestartet.
+
+Nach neuer ausdrücklicher Nutzerfreigabe wurde derselbe saubere Stand `87be963`
+einmal auf AMBOSS als unabhängige Windows-Aufgabe gebaut: ein Cargo-Job,
+BelowNormal-Priorität, mehr als vier GiB freier RAM vor Start, kein WSL.
+Das Full-Releasepaket besteht mit allen 482 Prüfsummen sowie der vollständigen
+Vue-Abnahme und MCP-HTTP-/stdio-Interop am kopierten Releasebinary mit leerem
+PATH. Das umfasst die verzögerte Eingabebestätigung nach Fokusverlust,
+Steuerung ohne Anfangsbild und ungewisse Eingabe ohne Replay.
+Die temporäre Aufgabe ist entfernt, ihre Buildprozesse sind beendet.
+
+Das Startskript konnte den Prozess-Exitcode nicht auslesen. Der Paketabschluss,
+Scheduler-Ergebnis 0, Archiv-/Dateiprüfsummen und die bestandenen Laufzeittests
+bestätigen das fertige Ergebnis; es war kein weiterer Build nötig.
+Das Archiv liegt lokal unter
+`target/packages/approved-final-87be963/kvmhelm-0.1.0-x86_64-pc-windows-msvc-full.tar.gz`
+(76.058.185 Bytes, SHA-256
+`ece53bbd8f8dc276c8b2123dffef66e7591976ec8c83e56ec0dc68439bc11c41`).
+Das Binary ist 25.641.984 Bytes groß, SHA-256
+`9da3f3067c1bb6b9b7632be0e869e27874cde3371a4f6485dbe6ccb1b5f1b199`.
+
+Der bestehende Testdaemon verwendet nun dieses Release mit erhaltenen
+Daten/Secrets nach privater Sicherung und ohne aktive Kontrolllease beim
+Wechsel. Readiness, Web und authentifizierte API bestehen lokal und über
+geprüftes LAN-TLS. Die Tastaturbelegung wurde dabei nicht geändert;
+der reale exakte Typetest bleibt bis zur Nutzerentscheidung offen.
 Diese Nacharbeit ist kein neuer Ressourcenmesslauf und
 keine neue macOS-/Dienst-/Containerabnahme.
 

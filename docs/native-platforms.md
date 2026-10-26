@@ -218,12 +218,22 @@ kein neues Testsuite-Ergebnis. Weitere WSL-/Linux-Läufe auf ENVY bleiben nach
 dem RAM-Notfall auf Nutzeranweisung gesperrt. Der frühere vollständige
 Linuxnachweis ist deshalb ausdrücklich dem oben genannten Stand zugeordnet.
 
-Der abschließende Windows-Release-Lauf aus `87be963` wurde auf AMBOSS mit einem
+Der erste abschließende Windows-Release-Lauf aus `87be963` wurde auf AMBOSS mit einem
 Cargo-Job begonnen. Nach `native_deadline_exceeded` des Remote-Aufrufs waren
 keine eigenen Buildprozesse, kein Releasebinary und kein Paket vorhanden.
 Dieser Lauf ist kein bestandener Paketnachweis; ein weiterer Build wurde
-wegen der vom Nutzer gesetzten Einmal-Grenze nicht gestartet. Der bereitgestellte
-Testdienst bleibt beim zuvor geprüften Debugbinary aus `4ead283`.
+erst nach einer neuen ausdrücklichen Nutzerfreigabe ausgeführt.
+
+Der separat freigegebene Einmallauf desselben sauberen Standes `87be963` besteht
+auf AMBOSS als unabhängige Windows-Aufgabe mit einem Cargo-Job und
+BelowNormal-Priorität, ohne WSL. Das Full-Paket mit 483 Dateien besteht mit
+allen 482 Prüfsummen, abgeglichenen Eingabehashes und der vollständigen
+Release-Vue- und MCP-HTTP-/stdio-Prüfung ohne Neukompilierung. Der fehlende
+Exitcode im Startskript ist anhand des fertigen Pakets, Scheduler-Ergebnis 0
+und der bestandenen Laufzeittests abgeglichen. Die temporäre Aufgabe ist
+entfernt; der bestehende Testdienst auf ENVY verwendet das geprüfte Release
+mit erhaltenen Daten/Secrets und erfolgreicher lokaler/LAN-TLS-Prüfung.
+Archiv- und Binaryhash stehen in der [Reviewvorlage](native-review.md).
 
 Der reale Agentlauf (`gpt-6.1-sol`, `medium`) am Debugbinary aus `4ead283`
 verwendet alle sechs MCP-Tools: Normale Shift-Eingabe und Mausbewegung ohne
