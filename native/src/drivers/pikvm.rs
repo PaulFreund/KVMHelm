@@ -384,6 +384,23 @@ impl KvmDriver for PiKvmDriver {
             {
                 Ok(body) => break body,
                 Err(error) if error.details.get("http_status") == Some(&json!(503)) => {
+                    // A sleeping HDMI source is not a broken HID connection.
+                    // Older compatible firmware may not expose this state API;
+                    // retain its bounded warm-up retry in that case.
+                    if let Ok(state) = self.json("/api/streamer", &cancellation).await
+                        && state["streamer"]["source"]["online"] == false
+                    {
+                        let mut caps = self.inner.capabilities.lock().unwrap();
+                        caps.video.signal = Signal::Absent;
+                        let _ = self
+                            .inner
+                            .events
+                            .send(DriverEvent::CapabilitiesChangedAt(self.connection_epoch()));
+                        return Err(GatewayError::message(
+                            "NO_SIGNAL",
+                            "No HDMI signal; the target may be asleep. Request control with wake=true to send one wake key.",
+                        ));
+                    }
                     if tokio::time::Instant::now() >= deadline {
                         return Err(GatewayError::message(
                             "FRAME_TIMEOUT",
@@ -396,6 +413,18 @@ impl KvmDriver for PiKvmDriver {
             }
         };
         let data = body.bytes(frames::FRAME_BYTES).await?;
+        if self.inner.capabilities.lock().unwrap().video.signal == Signal::Absent {
+            let hid = self.json("/api/hid", &cancellation).await?;
+            let mut caps = self.inner.capabilities.lock().unwrap();
+            caps.keyboard.hid = hid["keyboard"]["online"] == true;
+            caps.mouse.absolute = hid["mouse"]["absolute"] == true;
+            caps.mouse.relative = !caps.mouse.absolute;
+            caps.video.signal = Signal::Present;
+            let _ = self
+                .inner
+                .events
+                .send(DriverEvent::CapabilitiesChangedAt(self.connection_epoch()));
+        }
         let signal = self.inner.capabilities.lock().unwrap().video.signal;
         frames::inspect(data.into(), signal).await
     }

@@ -67,6 +67,8 @@ struct Driver {
     connects: AtomicUsize,
     snapshots: AtomicUsize,
     executes: AtomicUsize,
+    wake_recovers: AtomicBool,
+    actions: Mutex<Vec<Action>>,
     releases: AtomicUsize,
     capture_gate: Mutex<Option<Arc<Gate>>>,
     capability_gate: Mutex<Option<Arc<Gate>>>,
@@ -92,6 +94,8 @@ impl Driver {
             connects: AtomicUsize::new(0),
             snapshots: AtomicUsize::new(0),
             executes: AtomicUsize::new(0),
+            wake_recovers: AtomicBool::new(false),
+            actions: Mutex::new(Vec::new()),
             releases: AtomicUsize::new(0),
             capture_gate: Mutex::new(None),
             capability_gate: Mutex::new(None),
@@ -159,6 +163,7 @@ impl KvmDriver for Driver {
         match self.capture_fault.load(Ordering::Acquire) {
             0 => Ok(frame),
             1 => Err(GatewayError::new("FRAME_TIMEOUT")),
+            3 => Err(GatewayError::new("NO_SIGNAL")),
             _ => Err(GatewayError::new("DEVICE_OFFLINE")),
         }
     }
@@ -180,8 +185,9 @@ impl KvmDriver for Driver {
     fn validate(&self, actions: &[Action], w: u32, h: u32) -> Result<()> {
         validate_hid(actions, w, h, true, true, self.layout)
     }
-    async fn execute(&self, _: &Action, context: &ActionContext) -> Result<Delivery> {
+    async fn execute(&self, action: &Action, context: &ActionContext) -> Result<Delivery> {
         context.check()?;
+        self.actions.lock().unwrap().push(action.clone());
         self.executes.fetch_add(1, Ordering::AcqRel);
         let gate = self.execute_gate.lock().unwrap().clone();
         if let Some(gate) = gate {
@@ -191,6 +197,10 @@ impl KvmDriver for Driver {
             return Err(GatewayError::new("EXECUTION_UNKNOWN"));
         }
         context.check()?;
+        if self.wake_recovers.load(Ordering::Acquire) {
+            self.capture_fault.store(0, Ordering::Release);
+            *self.signal.lock().unwrap() = Signal::Present;
+        }
         Ok(Delivery::Sent)
     }
     async fn release_all_inputs(&self) -> Result<()> {
@@ -406,6 +416,191 @@ fn batch(session: &str, reference: Value, id: &str, actions: Value) -> Value {
 }
 fn code(result: &ToolResult) -> &str {
     result.body["error"]["code"].as_str().unwrap()
+}
+
+#[tokio::test]
+async fn explicit_wake_recovers_a_sleeping_target_and_the_open_journal_never_repeats_it() {
+    let f = Fixture::new().await;
+    let driver = f.driver();
+    driver.capture_fault.store(3, Ordering::Release);
+    driver.wake_recovers.store(true, Ordering::Release);
+    let request = json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"wake-once"});
+    let (a, b) = tokio::join!(
+        f.core.tool(&f.a, "open_computer", request.clone()),
+        f.core.tool(&f.a, "open_computer", request.clone())
+    );
+    let id = session(&a);
+    assert_eq!(a.metadata(), b.metadata());
+    assert_eq!(
+        *driver.actions.lock().unwrap(),
+        vec![Action::Keypress {
+            keys: vec!["SHIFT".into()]
+        }]
+    );
+    assert_eq!(a.images[0].info.signal, Signal::Present);
+    assert!(a.images[0].info.input_revision >= 2);
+    assert_eq!(driver.disconnects.load(Ordering::Acquire), 0);
+    assert!(f.core.tool(&f.a, "open_computer", request).await.success());
+    assert_eq!(driver.executes.load(Ordering::Acquire), 1);
+    f.core
+        .tool(&f.a, "close_computer", json!({"session_id":id}))
+        .await;
+    assert!(f.core.get(&f.id).unwrap().lease().is_none());
+    f.close().await;
+}
+
+#[tokio::test]
+async fn wake_needs_explicit_control_authority_and_does_not_type_into_an_awake_target() {
+    let f = Fixture::new().await;
+    let driver = f.driver();
+    driver.capture_fault.store(1, Ordering::Release);
+    assert_eq!(code(&f.open("observe").await), "FRAME_TIMEOUT");
+    assert_eq!(code(&f.open("control").await), "FRAME_TIMEOUT");
+    assert_eq!(
+        code(
+            &f.core
+                .tool(
+                    &f.a,
+                    "open_computer",
+                    json!({"computer_id":f.id,"mode":"observe","wake":true})
+                )
+                .await
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        code(
+            &f.core
+                .tool(
+                    &f.a,
+                    "open_computer",
+                    json!({"computer_id":f.id,"mode":"control","wake":true})
+                )
+                .await
+        ),
+        "INVALID_ARGUMENT"
+    );
+    f.core.stop_control(&f.a, &f.id, false).await.unwrap();
+    assert_eq!(
+        code(
+            &f.core
+                .tool(
+                    &f.a,
+                    "open_computer",
+                    json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"stopped"})
+                )
+                .await
+        ),
+        "CONTROL_SUSPENDED"
+    );
+    f.core.stop_control(&f.a, &f.id, true).await.unwrap();
+    let token = f
+        .auth
+        .create(
+            json!({"name":"observe only","scopes":["video:read"],"devices":["*"]}),
+            None,
+        )
+        .await
+        .unwrap()
+        .token
+        .to_string();
+    let viewer = f.auth.authenticate(&token, "viewer").unwrap();
+    assert_eq!(code(&f.core.tool(&viewer, "open_computer", json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"forbidden"})).await), "FORBIDDEN");
+    assert_eq!(driver.executes.load(Ordering::Acquire), 0);
+    driver.capture_fault.store(0, Ordering::Release);
+    let awake = f
+        .core
+        .tool(
+            &f.a,
+            "open_computer",
+            json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"awake"}),
+        )
+        .await;
+    session(&awake);
+    driver.capture_fault.store(1, Ordering::Release);
+    assert_eq!(
+        code(
+            &f.core
+                .tool(
+                    &f.b,
+                    "open_computer",
+                    json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"busy"})
+                )
+                .await
+        ),
+        "CONTROL_BUSY"
+    );
+    assert_eq!(driver.executes.load(Ordering::Acquire), 0);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn an_uncertain_wake_is_released_and_identical_retries_do_not_send_it_again() {
+    let f = Fixture::new().await;
+    let driver = f.driver();
+    driver.capture_fault.store(1, Ordering::Release);
+    driver.execute_fault.store(true, Ordering::Release);
+    let request =
+        json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"uncertain-wake"});
+    let first = f.core.tool(&f.a, "open_computer", request.clone()).await;
+    assert_eq!(code(&first), "EXECUTION_UNKNOWN");
+    assert_eq!(driver.executes.load(Ordering::Acquire), 1);
+    assert!(f.core.get(&f.id).unwrap().lease().is_none());
+    assert!(driver.releases.load(Ordering::Acquire) > 0);
+    assert_eq!(
+        f.core.tool(&f.a, "open_computer", request).await.metadata(),
+        first.metadata()
+    );
+    assert_eq!(driver.executes.load(Ordering::Acquire), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn accepted_wake_finishes_and_releases_after_its_caller_disappears() {
+    let f = Fixture::new().await;
+    let driver = f.driver();
+    driver.capture_fault.store(1, Ordering::Release);
+    driver.wake_recovers.store(true, Ordering::Release);
+    let gate = Arc::new(Gate::default());
+    *driver.execute_gate.lock().unwrap() = Some(gate.clone());
+    let request =
+        json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"disconnected-wake"});
+    let core = f.core.clone();
+    let identity = f.a.clone();
+    let args = request.clone();
+    let caller = tokio::spawn(async move { core.tool(&identity, "open_computer", args).await });
+    gate.entered().await;
+    caller.abort();
+    assert!(caller.await.err().unwrap().is_cancelled());
+    gate.release.notify_one();
+    let result = f.core.tool(&f.a, "open_computer", request).await;
+    let id = session(&result);
+    assert_eq!(driver.executes.load(Ordering::Acquire), 1);
+    f.core
+        .tool(&f.a, "close_computer", json!({"session_id":id}))
+        .await;
+    assert!(f.core.get(&f.id).unwrap().lease().is_none());
+    f.close().await;
+}
+
+#[tokio::test]
+async fn a_wake_without_a_returning_image_cleans_its_lease_and_never_retries_input() {
+    let f = Fixture::new().await;
+    let driver = f.driver();
+    driver.capture_fault.store(1, Ordering::Release);
+    let request =
+        json!({"computer_id":f.id,"mode":"control","wake":true,"request_id":"no-image-wake"});
+    let result = f.core.tool(&f.a, "open_computer", request.clone()).await;
+    assert_eq!(code(&result), "FRAME_TIMEOUT");
+    assert_eq!(driver.executes.load(Ordering::Acquire), 1);
+    assert!(f.core.get(&f.id).unwrap().lease().is_none());
+    assert_eq!(f.core.get(&f.id).unwrap().media.consumer_count(), 0);
+    assert_eq!(
+        f.core.tool(&f.a, "open_computer", request).await.metadata(),
+        result.metadata()
+    );
+    assert_eq!(driver.executes.load(Ordering::Acquire), 1);
+    f.close().await;
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 import { referencePath, referenceRoot } from "./reference.mjs";
-// The unchanged Vue bundle against isolated native and reference daemons.
+// The Vue bundle against isolated native and reference daemons.
 // Only explicitly created simulators receive input; no hardware/capture access.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -159,6 +159,23 @@ try {
     viewport: { width: 1440, height: 1100 },
   });
   const page = await context.newPage();
+  let sleeping = !reference;
+  if (!reference)
+    await page.route("**/api/v1/tools/open_computer", (route) => {
+      if (!sleeping || route.request().postDataJSON().mode !== "observe")
+        return route.continue();
+      return route.fulfill({
+        json: {
+          isError: true,
+          content: [],
+          structuredContent: {
+            ok: false,
+            frames: [],
+            error: { code: "NO_SIGNAL", message: "Sleeping fixture" },
+          },
+        },
+      });
+    });
   const errors = [],
     inputs = [];
   let streams = 0,
@@ -179,6 +196,31 @@ try {
     .getByRole("button", { name: "Desktop fixture", exact: true })
     .first()
     .click();
+  if (!reference) {
+    const wake = page.getByRole("button", {
+      name: "Aufwecken / Steuerung übernehmen",
+      exact: true,
+    });
+    await expect(wake).toBeEnabled();
+    const opened = page.waitForRequest(
+      (r) =>
+        r.url().endsWith("/tools/open_computer") &&
+        r.postDataJSON().mode === "control",
+    );
+    await wake.click();
+    const args = (await opened).postDataJSON();
+    assert.equal(args.wake, true);
+    assert.ok(args.request_id);
+    await expect(page.locator(".screen img")).toBeVisible();
+    sleeping = false;
+    await page
+      .getByRole("button", { name: "Steuerung freigeben", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Steuerung übernehmen", exact: true }),
+    ).toBeEnabled();
+    await page.unroute("**/api/v1/tools/open_computer");
+  }
   await expect(page.locator(".screen img")).toBeVisible();
   await createDevice(page, "Touch fixture");
   const devices = await request("/devices"),

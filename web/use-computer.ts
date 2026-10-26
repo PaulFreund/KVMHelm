@@ -70,14 +70,16 @@ export function useComputer(
       session.value.journal_remaining =
         result.structuredContent.journal_remaining;
   }
-  async function open(mode: "observe" | "control" = "observe") {
+  async function open(mode: "observe" | "control" = "observe", wake = false) {
+    const version = epoch;
     const result = await tool("open_computer", {
       computer_id: device().device_id,
       mode,
       ...(mode === "control" ? { request_id: crypto.randomUUID() } : {}),
+      ...(wake ? { wake: true } : {}),
       profile: overview() ? "overview" : "active",
     });
-    if (disposed) {
+    if (disposed || epoch !== version) {
       if (result.structuredContent.session)
         await tool("close_computer", {
           session_id: result.structuredContent.session.session_id,
@@ -168,10 +170,17 @@ export function useComputer(
     } else timer = setTimeout(poll, retry);
   }
   async function acquire() {
-    if (!session.value || busy.value) return;
+    if (busy.value || disposed) return;
     busy.value = true;
     cancelInputs();
     try {
+      if (!session.value) {
+        await open("control", true);
+        control.value = !!session.value;
+        error.value = "";
+        refresh();
+        return;
+      }
       const releasing = control.value;
       const result = await tool("computer_control", {
         session_id: session.value.session_id,

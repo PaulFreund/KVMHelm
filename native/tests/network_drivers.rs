@@ -72,6 +72,7 @@ struct State {
     sockets: AtomicUsize,
     snapshot_calls: AtomicUsize,
     warmup: AtomicUsize,
+    source_offline: AtomicBool,
     status: AtomicUsize,
     auth_status: AtomicUsize,
     body: Mutex<Vec<u8>>,
@@ -122,6 +123,7 @@ impl Fixture {
             sockets: AtomicUsize::new(0),
             snapshot_calls: AtomicUsize::new(0),
             warmup: AtomicUsize::new(0),
+            source_offline: AtomicBool::new(false),
             status: AtomicUsize::new(200),
             auth_status: AtomicUsize::new(200),
             body: Mutex::new(image.clone()),
@@ -287,6 +289,9 @@ async fn handler(
                 );
             }
         }
+    } else if path == "/api/streamer" && state.source_offline.load(Ordering::Acquire) {
+        *response.body_mut() =
+            full(json!({"ok":true,"result":{"streamer":{"source":{"online":false}}}}).to_string());
     } else if path == "/streamer/stream" {
         let parts = state.stream_parts.lock().unwrap().clone();
         let stream = stream::iter(
@@ -470,6 +475,61 @@ async fn snapshot_warmup_retries_only_503_and_cancellation_stops_read_retries() 
     assert_eq!(f.state.snapshot_calls.load(Ordering::Acquire), 5);
     assert_eq!(f.state.sockets.load(Ordering::Acquire), 1);
     driver.disconnect().await.unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+async fn a_sleeping_pikvm_source_keeps_hid_connected_and_recovers_without_reconnecting() {
+    let f = Fixture::new(false).await;
+    let driver = f.driver("PiKVM v4");
+    driver.connect(CancellationToken::new()).await.unwrap();
+    f.state.status.store(503, Ordering::Release);
+    f.state.source_offline.store(true, Ordering::Release);
+    assert_eq!(
+        driver
+            .snapshot(CancellationToken::new())
+            .await
+            .err()
+            .unwrap()
+            .code,
+        "NO_SIGNAL"
+    );
+    assert_eq!(
+        driver.capabilities().await.unwrap().video.signal,
+        Signal::Absent
+    );
+    assert_eq!(f.state.snapshot_calls.load(Ordering::Acquire), 1);
+    driver
+        .execute(
+            &action(json!({"type":"keypress","keys":["SHIFT"]})),
+            &context(),
+        )
+        .await
+        .unwrap();
+    f.state.status.store(200, Ordering::Release);
+    f.state.source_offline.store(false, Ordering::Release);
+    assert_eq!(
+        driver
+            .snapshot(CancellationToken::new())
+            .await
+            .unwrap()
+            .signal,
+        Signal::Present
+    );
+    assert!(driver.capabilities().await.unwrap().keyboard.hid);
+    assert_eq!(f.state.sockets.load(Ordering::Acquire), 1);
+    driver.disconnect().await.unwrap();
+    let events = f.state.events.lock().unwrap().clone();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"]["key"] == "ShiftLeft" && event["event"]["state"] == true)
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"]["key"] == "ShiftLeft" && event["event"]["state"] == false)
+    );
     f.close().await;
 }
 

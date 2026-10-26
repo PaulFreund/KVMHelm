@@ -533,6 +533,12 @@ pub struct OpenComputer {
         deserialize_with = "optional",
         skip_serializing_if = "Option::is_none"
     )]
+    pub wake: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "optional",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub request_id: Option<String>,
     #[serde(
         default,
@@ -610,6 +616,9 @@ impl Validate for ToolRequest {
     fn validate(&self) -> Result<()> {
         match self {
             Self::OpenComputer(a) => {
+                if a.wake == Some(true) && a.mode != Mode::Control {
+                    return Err(GatewayError::invalid());
+                }
                 if let Some(id) = &a.request_id {
                     bounded_text(id, 1, 128)?;
                 }

@@ -81,7 +81,32 @@ fn h264_reassembly_matches_original_loss_wrap_parameters_and_fragments() {
 #[ignore = "requires Node 24 and npm run prepare:reference"]
 fn advertised_mcp_contract_matches_the_original_sdk_registration() {
     let expected: Value = serde_json::from_str(&legacy("mcp-contract", None)).unwrap();
-    assert_eq!(kvmhelm::mcp::contract(), &expected);
+    let mut actual = kvmhelm::mcp::contract().clone();
+    let tools = actual["tools"].as_array_mut().unwrap();
+    let open = tools
+        .iter_mut()
+        .find(|tool| tool["name"] == "open_computer")
+        .unwrap();
+    assert_eq!(
+        open["inputSchema"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("wake"),
+        Some(json!({"type":"boolean"}))
+    );
+    let original = expected["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "open_computer")
+        .unwrap();
+    let extension = " With explicit user permission to wake a sleeping target, set wake=true in control mode: only if there is no screen, send one fixed Shift tap under the exclusive lease and wait for a fresh image. Reuse the same request_id on retry; never automatically resend an uncertain wake with a new ID.";
+    assert_eq!(
+        open["description"].as_str().unwrap().replace(extension, ""),
+        original["description"].as_str().unwrap()
+    );
+    open["description"] = original["description"].clone();
+    assert_eq!(actual, expected);
 }
 #[test]
 #[ignore = "requires Node 24 and npm run prepare:reference"]

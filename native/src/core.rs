@@ -254,15 +254,16 @@ impl Runtime {
     }
     pub fn describe(&self) -> Value {
         let mut s = self.state.lock().unwrap();
-        if matches!(s.status.as_str(), "ready" | "no_signal")
-            && let Some(frame) = self.media.latest()
-        {
-            s.status = if frame.info.signal == Signal::Absent {
-                "no_signal"
-            } else {
-                "ready"
-            }
-            .into();
+        if matches!(s.status.as_str(), "ready" | "no_signal") {
+            let absent = s
+                .caps
+                .as_ref()
+                .is_some_and(|caps| caps.video.signal == Signal::Absent)
+                || self
+                    .media
+                    .latest()
+                    .is_some_and(|frame| frame.info.signal == Signal::Absent);
+            s.status = if absent { "no_signal" } else { "ready" }.into();
         }
         let mut value = serde_json::to_value(&self.device).unwrap();
         let out = value.as_object_mut().unwrap();
@@ -638,7 +639,7 @@ impl Core {
                     break;
                 };
                 if let Some(error) = fault {
-                    if error.code != "FRAME_TIMEOUT" {
+                    if !matches!(error.code.as_str(), "FRAME_TIMEOUT" | "NO_SIGNAL") {
                         core.device_fault(&runtime, error).await;
                     }
                 } else {
@@ -1591,7 +1592,51 @@ impl Core {
                     Duration::from_millis(1500),
                     false,
                 )
-                .await?;
+                .await;
+            let image = match image {
+                Err(error)
+                    if args.wake == Some(true)
+                        && matches!(error.code.as_str(), "NO_SIGNAL" | "FRAME_TIMEOUT") =>
+                {
+                    let core = self.clone();
+                    let wake_identity = identity.clone();
+                    let s = session.clone();
+                    let r = runtime.clone();
+                    let woke = self
+                        .scheduled(&runtime, Arc::new(Flight::new()), async move {
+                            core.wake(&wake_identity, &s, &r).await?;
+                            Ok(ToolResult::ok(json!({})))
+                        })
+                        .await;
+                    if !woke.success() {
+                        return Ok(woke);
+                    }
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+                    loop {
+                        self.assert_control(identity, &session, &runtime, None)?;
+                        match self
+                            .observe(
+                                identity,
+                                &session,
+                                Duration::ZERO,
+                                deadline.saturating_duration_since(tokio::time::Instant::now()),
+                                true,
+                            )
+                            .await
+                        {
+                            Ok(image) => break image,
+                            Err(error)
+                                if matches!(error.code.as_str(), "NO_SIGNAL" | "FRAME_TIMEOUT")
+                                    && tokio::time::Instant::now() < deadline =>
+                            {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                }
+                result => result?,
+            };
             let mut result =
                 ToolResult::ok(json!({"session":session.view(),"lease":runtime.lease()}));
             result.images.push(image);
@@ -1602,6 +1647,57 @@ impl Core {
             self.close_session(&session.session_id).await;
         }
         work
+    }
+    // The sole input allowed before a frame is an explicitly requested, fixed
+    // modifier tap. It uses the device queue, exclusive lease and open journal;
+    // ordinary actions still require their complete current frame reference.
+    async fn wake(
+        self: &Arc<Self>,
+        identity: &Identity,
+        session: &Arc<Session>,
+        runtime: &Arc<Runtime>,
+    ) -> Result<()> {
+        self.assert_control(identity, session, runtime, None)?;
+        let cancellation = runtime.lifetime.child_token();
+        let generation = {
+            let mut state = runtime.state.lock().unwrap();
+            state.abort = Some(cancellation.clone());
+            state.generation
+        };
+        let context = {
+            let core = self.clone();
+            let identity = identity.clone();
+            let session = session.clone();
+            let runtime = runtime.clone();
+            ActionContext {
+                cancellation: cancellation.clone(),
+                width: 0,
+                height: 0,
+                assert_control: Arc::new(move || {
+                    core.assert_control(&identity, &session, &runtime, Some(generation))
+                }),
+            }
+        };
+        let result = async {
+            context.check()?;
+            runtime.media.bump_input_revision();
+            let _completed = InputFinished(runtime.clone());
+            let action = Action::Keypress {
+                keys: vec!["SHIFT".into()],
+            };
+            tokio::select! {biased;
+                _=cancellation.cancelled()=>Err(GatewayError::new("LEASE_REVOKED")),
+                result=tokio::time::timeout(Duration::from_secs(5), AssertUnwindSafe(runtime.driver.execute(&action, &context)).catch_unwind())=>match result {
+                    Ok(Ok(result))=>result.map(|_|()), Ok(Err(_))|Err(_)=>Err(unknown())
+                }
+            }
+        }.await;
+        if result.is_err() && !Self::release_driver(runtime).await {
+            runtime.state.lock().unwrap().suspended = true;
+        }
+        runtime.state.lock().unwrap().abort = None;
+        result?;
+        context.check()
     }
     async fn batch(
         self: &Arc<Self>,

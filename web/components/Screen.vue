@@ -325,14 +325,16 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="!overview" class="toolbar control-toolbar">
       <Button
-        :disabled="busy || !session || device.control_suspended"
+        :disabled="busy || device.control_suspended"
         @click="takeControl"
         >{{
           busy
             ? "Bitte warten …"
             : control
               ? "Steuerung freigeben"
-              : "Steuerung übernehmen"
+              : !session
+                ? "Aufwecken / Steuerung übernehmen"
+                : "Steuerung übernehmen"
         }}</Button
       >
       <Button

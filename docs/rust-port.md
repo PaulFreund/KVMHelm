@@ -20,6 +20,34 @@ alten Produktionsserver zurück. Keine npm-Abhängigkeit ist für den nativen
 Corebetrieb erforderlich; SDK/WebRTC/Bildbibliotheken im npm-Devgraph dienen
 ausschließlich Testgegenstellen und dem Browserbuild.
 
+## Schlafende Ziele aufwecken
+
+Ohne Bild bleibt eine normale Beobachtungsanfrage ohne Eingabewirkung. Die
+Weboberfläche bietet dann ausdrücklich **Aufwecken / Steuerung übernehmen** an.
+Über MCP/REST ist derselbe Vorgang eine additive Option des vorhandenen Tools:
+
+```json
+{"computer_id":"<id>","mode":"control","wake":true,"request_id":"<eindeutige-id>"}
+```
+
+Nur wenn der erste Bildabruf `NO_SIGNAL` oder `FRAME_TIMEOUT` liefert, sendet
+der Core einmal Shift drücken/loslassen. Der Vorgang benötigt Eingaberechte,
+eine exklusive Kontrolllease und die serielle Gerätequeue; Not-Stopp und
+Kontrollgeneration gelten auch dabei. Danach wartet er bis zu acht Sekunden
+auf ein frisches Bild. Bei einem bereits verfügbaren Bild wird keine Taste
+gesendet. `wake=true` ist im Beobachtungsmodus ungültig. Beliebige weitere
+Eingaben benötigen weiterhin ihre aktuelle Bildreferenz.
+
+Für einen Wiederholungsaufruf muss dieselbe `request_id` verwendet werden;
+das Open-Journal sendet den Aufweckimpuls dabei nicht erneut. Bei unbekannter
+Zustellung keine neue Aufweckanfrage automatisch erzeugen. Kehrt kein Bild
+zurück, wird die Session samt Lease bereinigt. PiKVM-HTTP 503 mit explizit
+offline gemeldeter HDMI-Quelle ergibt `NO_SIGNAL`, ohne den HID-Kanal zu
+trennen. Firmware ohne lesbaren Streamerstatus behält den begrenzten
+Snapshot-Warmup. Alle bisherigen Toolnamen und Aufrufe bleiben erhalten;
+der Originalvergleich prüft ausschließlich diese additive Schema-/Hilfetext-
+Erweiterung gesondert und alle übrigen Metadaten unverändert.
+
 ## Funktionszuordnung
 
 Die Zuordnung nennt die ursprünglichen Quellen und ihre ausführbaren Rust-Komponenten. Die nachfolgenden Abschnitte beschreiben deren Integration und die tatsächlich ausgeführten Daemon-, Browser- und Paketprüfungen; isolierte Komponentenprüfungen ersetzen diese Nachweise nicht.

@@ -64,7 +64,7 @@
     },
     {
       "name": "open_computer",
-      "description": "Open an observe or exclusive control session and get its screen; control requires request_id. When the user asks to see the screen or a visual result, explicitly display the returned image in your user-visible response using your client's supported image attachment/rendering mechanism. An image in a tool result may be visible only to you. Forward the actual image content; do not replace it with a description or invent a URL. If your client cannot display it, say so; never claim an image is shown unless you included it. Do not upload screenshots to an external service merely to display them.",
+      "description": "Open an observe or exclusive control session and get its screen; control requires request_id. With explicit user permission to wake a sleeping target, set wake=true in control mode: only if there is no screen, send one fixed Shift tap under the exclusive lease and wait for a fresh image. Reuse the same request_id on retry; never automatically resend an uncertain wake with a new ID. When the user asks to see the screen or a visual result, explicitly display the returned image in your user-visible response using your client's supported image attachment/rendering mechanism. An image in a tool result may be visible only to you. Forward the actual image content; do not replace it with a description or invent a URL. If your client cannot display it, say so; never claim an image is shown unless you included it. Do not upload screenshots to an external service merely to display them.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -77,6 +77,9 @@
               "observe",
               "control"
             ]
+          },
+          "wake": {
+            "type": "boolean"
           },
           "request_id": {
             "type": "string",

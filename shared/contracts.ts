@@ -257,6 +257,7 @@ export const toolSchemas = {
     .object({
       computer_id: z.string(),
       mode: z.enum(["observe", "control"]),
+      wake: z.boolean().optional(),
       request_id: z.string().min(1).max(128).optional(),
       profile: profileSchema.optional(),
     })
