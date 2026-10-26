@@ -126,13 +126,28 @@ aktualisieren. Andernfalls wird die nächste bewusst gesendete Texteingabe als
 Fokuswiederherstellung, Wiederholung oder Rücksetzen auf eine ältere Session
 beziehungsweise Inputrevision.
 
+`4ead283` besteht unter Windows zusätzlich mit allen 17 Netzwerk-/HID-Tests,
+Rustfmt, Clippy über alle Ziele mit `-D warnings`, Vue-Build, vier Queue-Tests
+und dem vollständigen Browsercheck einschließlich der verzögerten Antwort.
+Der reale Zeichenverlust führte außerdem zu fünf Millisekunden Abstand
+zwischen PiKVM-Tastaturzuständen. Zwei neue Tests bilden USB-Polling mit
+wiederholten Zeichen und wechselnder Groß-/Kleinschreibung sowie Abbruch
+während eines gehaltenen Tastenzustands nach.
+
 Unter Ubuntu 24.04/WSL2 bestehen mit UID/GID 65534 ebenfalls Rustfmt, Clippy
 mit `-D warnings`, Vue-Build, alle 121 regulären nativen Tests, zehn direkte
 Originalvergleiche sowie der vollständige Browser- und MCP-HTTP-/stdio-Check.
 Der dort geprüfte native und Web-Code entspricht `0bf98d2`; die abschließende
 Browser-Fixture entspricht `e963980`.
 
-Der erneute reale Agentlauf mit `gpt-6.1-sol`, Reasoning `medium`, über
+Für `4ead283` bestehen unter Linux erneut Vue-Build/Typecheck, Rustfmt und
+Clippy mit `-D warnings`. Der anschließende vollständige Testlauf endete
+während der Kompilierung mit Exitcode 1 ohne Compilerdiagnose; ein neues
+Testsuite-Ergebnis liegt deshalb nicht vor. Nach dem RAM-Notfall sind weitere
+WSL-/Linux-Läufe auf ENVY auf Nutzeranweisung gesperrt. Die früheren 121 Tests
+und Interopläufe sind kein Nachweis für diese spätere Änderung.
+
+Der frühere reale Agentlauf mit `gpt-6.1-sol`, Reasoning `medium`, über
 Streamable HTTP am Debugbinary aus `0bf98d2` hat alle sechs Tools aufgerufen
 (19 Aufrufe, Thread `01a1786f-b303-7502-a30c-187d8e349514`). Beobachtungssession
 und Kontrollübernahme funktionieren ohne Bild. Eine gewöhnliche Shift-Eingabe
@@ -141,7 +156,30 @@ jeweils als `sent` gemeldet. Zehn Sekunden weitere Bildabrufe erhielten weiter
 `NO_SIGNAL`/`FRAME_TIMEOUT`. Der Agent gab Kontrolle und eigene Session frei.
 Ein `sent` beweist die Übertragung im Gateway, nicht den Empfang durch das
 Zielbetriebssystem oder eine sichtbare Wirkung. PIN, Paint und Notepad wurden
-ohne Bild nicht verwendet; die visuelle Hardwareabnahme ist weiter offen.
+ohne Bild nicht verwendet.
+
+Nach dem Einschalten durch den Nutzer lieferte derselbe Debugstand ein echtes
+Bild. Der Agent öffnete Notepad und prüfte die Testzeile visuell: Zeichen
+fehlten und Groß-/Kleinschreibung war falsch, obwohl `sent` gemeldet wurde
+(12 Aufrufe, Thread `01a1789f-77ee-7a01-8d45-0a7df03f7245`). Die danach
+eingebaute zeitliche Trennung der Tastaturzustände ist im folgenden Lauf
+geprüft.
+
+Der Lauf am Debugbinary aus `4ead283` verwendete alle sechs Tools über
+Streamable HTTP (30 Aufrufe, Thread `01a178c8-af24-7da3-99bd-82e045a286fa`).
+Ohne Anfangsbild wurden eine normale Shift-Eingabe und eine normalisierte
+Mausbewegung übertragen. Danach erschien der Sperrbildschirm; das autorisierte
+Entsperren funktionierte. Eine neue Notepad-Zeile kam vollständig mit 77 Zeichen
+an; Groß-/Kleinschreibung und Wiederholungen stimmen. Die Auswahl von exakt
+„Blue“ per Maus wurde im Bild bestätigt. Vorherige ungespeicherte Dokumente
+blieben erhalten; Kontrolle und eigene Session wurden freigegeben.
+
+Die vollständige Textkorrektheit ist dennoch nicht abgenommen: Das Gerät ist
+mit `keyboard_layout=de` konfiguriert, die sichtbaren Ersetzungen entsprechen
+dagegen US-International (`typing` → `tzping`, `-` → `/`, `äöü` → `';[`).
+Diese Zuordnung entspricht der ursprünglichen Implementierung. Die gewünschte
+Abstimmung zwischen Geräteprofil und Zielbelegung ist im Ticket gefragt; sie
+wurde noch nicht durch eine Konfigurationsänderung vorweggenommen.
 
 Der Testdaemon wurde mit vorhandenen Daten/Secrets nach privater Sicherung
 aktualisiert. Loopback und LAN-TLS, Readiness, Web und Anmeldung bestehen;
@@ -179,14 +217,15 @@ exklusiven Host belegen keine Langzeit- oder Hardwareleistung.
   Daemon in einer transienten Unit geprüft.
 - Container: Dockerfile, Compose und Prüfjob vorhanden; Build/Lauf auf ENVY
   und WSL mangels Engine nicht ausgeführt.
-- Am physischen PiKVM wurden alle sechs MCP-Tools aufgerufen und normale
-  Tastatur-/Mauseingaben ohne Video als `sent` gemeldet. Sichtbare Wirkung und
-  Bedienung von Paint/Notepad bleiben ohne Signal offen. Comet-, JetKVM-, Audio- und
-  Mikrofonpfade sind weiterhin ausschließlich mit synthetischen Gegenstellen geprüft.
+- Am physischen PiKVM sind Eingaben ohne Anfangsbild mit anschließendem Video,
+  Entsperren, vollständige Notepad-Eingabe und Mausauswahl sichtbar geprüft.
+  Exakte Textkorrektheit wartet auf den Abgleich der Tastaturbelegung.
+  Comet-, JetKVM-, Audio- und Mikrofonpfade sind weiterhin ausschließlich mit
+  synthetischen Gegenstellen geprüft.
 - Linuxnachweise gelten für Ubuntu 24.04/WSL2 x64; das gebaute Paket verlangt
   GLIBC_2.39. Keine Linux-/macOS-Ressourcenmessung. Höhere Auflösungen,
   längere Last und kleine Antwortzeiten auf ruhigem Host brauchen eigene Läufe.
 
 Die Nutzerabnahme des Branches und eine spätere Produktivfreigabe bleiben
-getrennte Entscheidungen. Der Testdaemon läuft auf ausdrücklichen Nutzerwunsch;
+getrennte Entscheidungen. Der Testdaemon wird auf ausdrücklichen Nutzerwunsch betrieben;
 Push, main-Merge, SCM-Dienstinstallation und Produktivfreigabe erfolgten nicht.

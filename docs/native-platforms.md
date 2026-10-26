@@ -199,6 +199,10 @@ unbekannten Ausgang ohne Replay und Kontrollübernahme nach Sessionverlust;
 der MCP-HTTP-/stdio-Check verwendet kopierte Binaries mit leerem PATH.
 Die abschließende Browserprüfung erzwingt außerdem eine verspätete
 Eingabebestätigung nach Fokusverlust und prüft die anschließende Texteingabe.
+`4ead283` besteht unter Windows mit dieser Browserprüfung, allen 17
+Netzwerk-/HID-Tests und erneutem strengen Clippy über alle Ziele. Die zwei
+zusätzlichen nativen Tests prüfen zeitlich getrennte Tastaturzustände bei
+USB-Polling und deren Freigabe bei Abbruch.
 
 Die erneute Linuxprüfung unter Ubuntu 24.04/WSL2 als UID/GID 65534 besteht:
 Rustfmt, Clippy mit `-D warnings`, Vue-Build, 121 reguläre native Tests, zehn
@@ -207,10 +211,21 @@ Der native und Web-Code entspricht `0bf98d2`; die in `e963980` präzisierte
 Sessionverlust-Fixture besteht unter Windows und Linux. Die früheren
 Linux-Releasepakete wurden in dieser Nacharbeit nicht neu gebaut.
 
-Der reale Agentlauf (`gpt-6.1-sol`, `medium`) am Debugbinary aus `0bf98d2`
-öffnet Session und Kontrolle ohne Bild und meldet normale Shift-Eingabe sowie
-eine getrennte Mausbewegung als `sent`. Alle sechs MCP-Tools wurden aufgerufen;
-der Bildabruf scheitert weiterhin mit `NO_SIGNAL`/`FRAME_TIMEOUT`. Kontrolle
-und eigene Session wurden freigegeben. Ohne Bild sind sichtbare Wirkung,
-Entsperren und Paint/Notepad nicht bestätigt. Synthetische Protokoll- und
-Plattformprüfungen ersetzen diesen ausstehenden Bedienungsnachweis nicht.
+Am Stand `4ead283` bestehen unter Linux zusätzlich Vue-Build/Typecheck,
+Rustfmt und Clippy mit `-D warnings`. Der folgende vollständige Testlauf
+endete während der Kompilierung mit Exitcode 1 ohne Diagnose und liefert
+kein neues Testsuite-Ergebnis. Weitere WSL-/Linux-Läufe auf ENVY bleiben nach
+dem RAM-Notfall auf Nutzeranweisung gesperrt. Der frühere vollständige
+Linuxnachweis ist deshalb ausdrücklich dem oben genannten Stand zugeordnet.
+
+Der reale Agentlauf (`gpt-6.1-sol`, `medium`) am Debugbinary aus `4ead283`
+verwendet alle sechs MCP-Tools: Normale Shift-Eingabe und Mausbewegung ohne
+Anfangsbild führen zu einem frischen Sperrbildschirm; das autorisierte
+Entsperren funktioniert. Die neue Notepad-Zeile kommt vollständig mit
+korrekter Groß-/Kleinschreibung und Wiederholungen an; die Auswahl von genau
+„Blue“ per Maus ist im Bild bestätigt. Kontrolle und eigene Session wurden
+freigegeben. Die verbliebenen Zeichenersetzungen entsprechen einem deutschen
+Geräteprofil bei einer Zielbelegung wie US-International. Der Abgleich ist im
+Ticket gefragt; ein vollständig korrekter Text ist noch nicht abgenommen.
+Synthetische Protokoll- und Plattformprüfungen ersetzen diesen fehlenden
+Konfigurations- und Bedienungsnachweis nicht.
