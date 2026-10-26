@@ -117,6 +117,8 @@ Unter Unix wird auch SIGTERM geordnet verarbeitet.
   Benutzer `kvmhelm`, `/opt/kvmhelm/current` und `/var/lib/kvmhelm`. Bootstrap
   unter diesem Account ausführen. `ProtectHome` verlangt Pluginprogramme
   außerhalb geschützter Homeverzeichnisse oder eine bewusste Anpassung.
+  Ein tatsächlicher [WSL-systemd-Test](native-platforms.md) mit umgelegten
+  Testpfaden und UID/GID 65534 prüft Start/Restart/Stop und Helferbereinigung.
 - macOS: `local.kvmhelm.plist` ist eine LaunchAgent-Vorlage für den Datenbesitzer.
   `__PACKAGE_ROOT__` und `__HOME__` durch absolute XML-escaped Pfade ersetzen.
 
@@ -202,7 +204,16 @@ Er dokumentiert niedrigeren Arbeitssatz/Commit und unter aktiver Last weniger
 Prozess-CPU in den erfassten Fällen; die Latenz verbessert sich nicht durchgehend.
 Versionen, Hashes, Hostlast und die kurzen synthetischen Lastgrenzen sind angegeben.
 
-Linux/macOS-Laufzeit, SCM/systemd/launchd, Container und physische Geräte
-bleiben getrennt vom lokalen Windows-Prozessbetrieb offen. Der gemessene
-Zwischenstand ändert weder eine vorhandene Installation noch den bisherigen
+Linux x64 ist zusätzlich unter Ubuntu 24.04/WSL2 gebaut und ausgeführt:
+111 native Tests, zehn Originalvergleiche, Paketmigration/SIGTERM, MCP,
+JetKVM/FFmpeg, Janus-/Vue-/Plugin-Audio, Plugin-Lifecycle, Vue und ein
+transienter systemd-Lauf mit unprivilegiertem Daemon bestehen.
+Die Paket-/Interopläufe verwenden UID/GID 65534. Der konkret gebaute
+Linux-Daemon verlangt Symbole bis GLIBC_2.39; OS-Bibliotheken, Nachweise und
+Grenzen stehen in [Native Plattformabnahme](native-platforms.md).
+Daten/Secrets verlangen tatsächlich anwendbare private POSIX-Modi.
+Ein Mount, der `chmod` annimmt, aber offene Rechte behält, wird jetzt abgewiesen.
+
+macOS/launchd, Windows-SCM, Container und physische Geräte bleiben separat
+offen. Der Stand ändert weder eine vorhandene Installation noch den bisherigen
 `npm start`-Referenzpfad.

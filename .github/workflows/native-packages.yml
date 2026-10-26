@@ -57,5 +57,12 @@ jobs:
           New-Item -ItemType Directory -Path target/scm-package | Out-Null
           tar -xzf target/packages/kvmhelm-0.1.0-x86_64-pc-windows-msvc-full.tar.gz -C target/scm-package --strip-components=1
           ./scripts/test-windows-service.ps1 -PackageDirectory target/scm-package
+      - name: Transient systemd unit with an unprivileged daemon
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo env KVMHELM_TEST_SYSTEMD=1 \
+            KVMHELM_TEST_HELPER_DIRECTORY="$PWD/target/interop-package" \
+            "$(command -v node)" scripts/native-systemd-interop.mjs
       # Archives remain in this job's workspace. Publishing or attaching build
       # artifacts is a separate explicitly requested operator action.

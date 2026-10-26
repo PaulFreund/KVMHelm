@@ -681,3 +681,27 @@ async fn posix_secret_permissions_are_private_and_symlinks_are_rejected() {
     .unwrap();
     assert!(secrets.get(Some("linked")).await.is_err());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires an explicitly selected filesystem that accepts chmod but ignores private modes"]
+async fn secret_storage_rejects_filesystems_that_ignore_private_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::var_os("KVMHELM_TEST_NON_POSIX_ROOT")
+        .expect("Set KVMHELM_TEST_NON_POSIX_ROOT to an owned test directory on that filesystem");
+    let dir = tempfile::tempdir_in(root).unwrap();
+    let probe = dir.path().join("mode-probe");
+    fs::write(&probe, []).unwrap();
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_ne!(
+        fs::metadata(&probe).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "This test needs a filesystem that ignores chmod; a normal POSIX directory is not a negative fixture"
+    );
+    let secrets = dir.path().join("secrets");
+    assert!(
+        Secrets::open(&secrets).await.is_err(),
+        "Never publish a master key when private permissions cannot be enforced"
+    );
+    assert!(!secrets.join("master.key").exists());
+}

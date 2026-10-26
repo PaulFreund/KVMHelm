@@ -35,10 +35,17 @@ pub(crate) fn directory(path: &Path) -> io::Result<()> {
 #[cfg(unix)]
 pub(crate) fn restrict(path: &Path, dir: bool) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(
-        path,
-        fs::Permissions::from_mode(if dir { 0o700 } else { 0o600 }),
-    )
+    let mode = if dir { 0o700 } else { 0o600 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    // Some mounted filesystems acknowledge chmod without applying it. Do not
+    // create/read protected state there under an illusory private mode.
+    if fs::symlink_metadata(path)?.permissions().mode() & 0o7777 != mode {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Filesystem does not enforce private permissions",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
