@@ -150,11 +150,15 @@ Am 26.10.2026 bestanden auf ENVY:
 | Linux systemd 255.4                     | Debug- und Releasebinary in transienter Unit mit UID/GID 65534, privaten Dateien und den beschriebenen Härtungspolicies; Start/Restart/Stop/Wiederöffnung, Sessionfreigabe und beobachtete Helferbereinigung          | Betreiberinstallation mit konkretem Account, EnvironmentFile und dauerhaftem Autostart |
 | macOS x64/arm64                         | CI-Definitionen, Paketierungszweige und launchd-Vorlage vorhanden; Syntax der XML-Vorlage gelesen                                                                                                                     | Nativer Build/Lauf und launchd-Ausführung                                              |
 
-Das getestete Linux-Releasebinary hat SHA-256
+Das vor dem abschließenden Vertragsabgleich getestete Linux-Releasebinary hat SHA-256
 `c3cebdce38f94244712e2697bda6e012c1a0d14fa6904743d1b81e6bc107d121`.
 Das Full-Paket enthält 481 Dateien, Notices für 250 Cargo-Pakete und zehn
-Browsermodule. Das Endpaket wird nach dem lokalen Commit erneut aus dem sauberen
-Quellstand gebaut; sein Binaryhash muss dem integrationserprobten Binary entsprechen.
+Browsermodule. Die drei Profile wurden aus dem sauberen Commit `385682d`
+erneut gebaut und geprüft; ihr Binary stimmt mit dem integrationserprobten
+Binary überein. Das gilt ebenso für Windows mit dem im Messbericht genannten
+Binaryhash. Der nachfolgende Vertragsabgleich ändert HEAD/OPTIONS und den
+Offlinebefehl `demo`; seine aktuellen Nachweise stehen in der
+[Reviewvorlage](native-review.md).
 Paketbau allein beweist keine identischen Compilerergebnisse auf anderen Hosts.
 
 Die normalen Medien-/Plugin-/Browserfixtures verwenden ihre bestehenden

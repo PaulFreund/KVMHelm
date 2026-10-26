@@ -6,6 +6,8 @@ Der Rust-Dienst enthält HTTP/MCP und eine CLI mit stdio-Bridge, eingebetteter V
 
 ## Start
 
+Die [Reviewvorlage zur Rust-Portierung](docs/native-review.md) fasst den integrierten Stand, die ausgeführten Prüfungen, Messwerte und offenen Plattformabnahmen zusammen.
+
 Ein natives Paket entpacken und mit `verify.ps1` beziehungsweise `verify.sh`
 prüfen; siehe [Pakete und Migration](docs/native-packaging.md). Im Paketverzeichnis:
 

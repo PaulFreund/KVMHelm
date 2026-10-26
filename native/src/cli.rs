@@ -320,7 +320,7 @@ async fn run_inner(lifecycle: Option<Lifecycle>) -> Result<()> {
     let command = args.positions.first().map(String::as_str).unwrap_or("help");
     if command == "help" {
         println!(
-            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  plugin list|install <directory>|enable|disable|restart|uninstall\n  secrets cleanup\n  doctor\n  healthcheck [--url https://localhost:8765 --ca trusted-ca.pem]\nUse --data and --secrets for separate protected storage locations. Remote CLI/MCP TLS trusts --ca or KVMHELM_CA in addition to public roots. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugins optionally require Node (KVMHELM_NODE, beside this executable or PATH). Full API/UI/platform validation, release packaging and performance measurements remain in progress."
+            "KVMHelm native\n  serve [--host 127.0.0.1 --port 8765 --cert cert.pem --key key.pem]\n  token bootstrap|create|list|revoke\n  demo\n  mcp --transport stdio [--url http://127.0.0.1:8765 --pat-file protected-file]\n  device list|add --file config.json|test|benchmark|stop|resume\n  plugin list|install <directory>|enable|disable|restart|uninstall\n  secrets cleanup\n  doctor\n  healthcheck [--url https://localhost:8765 --ca trusted-ca.pem]\nUse --data and --secrets for separate protected storage locations. Remote CLI/MCP TLS trusts --ca or KVMHELM_CA in addition to public roots. JetKVM video requires FFmpeg (KVMHELM_FFMPEG, beside this executable or PATH). Plugins optionally require Node (KVMHELM_NODE, beside this executable or PATH). Build, migration and platform validation: docs/native-packaging.md and docs/native-platforms.md."
         );
         #[cfg(windows)]
         println!(
@@ -523,8 +523,8 @@ async fn run_inner(lifecycle: Option<Lifecycle>) -> Result<()> {
         };
         let core = Core::new(store.clone(), vault, auth, limits, 120000)?;
         let result = async {
-            core.load().await?;
             if command == "demo" {
+                core.load_devices().await?;
                 let pat = crate::mcp_bridge::read_pat(&pat_file(&args)?)?;
                 let identity = core.auth.authenticate(&pat, "cli")?;
                 for n in 1..=4 {
@@ -536,6 +536,7 @@ async fn run_inner(lifecycle: Option<Lifecycle>) -> Result<()> {
                 println!("Added four explicitly simulated targets.");
                 return Ok(());
             }
+            core.load().await?;
             let lan = args.configured("lan-host", "KVMHELM_LAN_HOST");
             let cert = args.configured("cert", "KVMHELM_CERT").map(PathBuf::from);
             let key = args.configured("key", "KVMHELM_KEY").map(PathBuf::from);

@@ -542,11 +542,26 @@ async fn read_json(mut body: Incoming) -> Result<Value> {
     .unwrap_or_else(|_| Err(GatewayError::invalid()))
 }
 async fn entry(state: Arc<State>, request: Request<Incoming>) -> Response<Body> {
+    let head = request.method() == Method::HEAD;
     let result = entry_checked(state.clone(), request).await;
     if let Err(error) = &result {
         state.core.record_error(&error.code);
     }
     let mut response = result.unwrap_or_else(error_response);
+    if head {
+        // Express runs GET handlers for HEAD, including authorization and
+        // readiness checks, but sends only their headers. Drop streaming
+        // bodies immediately so subscriptions and admission permits end here.
+        if !response.headers().contains_key("content-length")
+            && let Some(length) = hyper::body::Body::size_hint(response.body()).exact()
+        {
+            response.headers_mut().insert(
+                "content-length",
+                HeaderValue::from_str(&length.to_string()).unwrap(),
+            );
+        }
+        *response.body_mut() = full(Bytes::new());
+    }
     for (name, value) in [
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),
@@ -570,10 +585,10 @@ async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<
     {
         return Err(GatewayError::new("FORBIDDEN"));
     }
-    if path == "/healthz" && parts.method == Method::GET {
+    if path == "/healthz" && matches!(parts.method, Method::GET | Method::HEAD) {
         return Ok(json_response(200, json!({"ok":true,"service":"KVMHelm"})));
     }
-    if path == "/readyz" && parts.method == Method::GET {
+    if path == "/readyz" && matches!(parts.method, Method::GET | Method::HEAD) {
         return Ok(if state.core.store.health().await.is_ok() {
             json_response(200, json!({"ok":true}))
         } else {
@@ -651,11 +666,14 @@ async fn entry_checked(state: Arc<State>, request: Request<Incoming>) -> Result<
         return Err(GatewayError::new("DEVICE_OFFLINE"));
     }
     let app = state.clone();
+    let head = parts.method == Method::HEAD;
     let long_stream = parts.method == Method::GET
         && (path == "/mcp" || path == "/api/v1/events" || path.ends_with("/video"));
     let task = state.tasks.spawn(async move {
         let response = dispatch(app, parts, body, auth, peer).await?;
-        if long_stream {
+        // HEAD has no buffered output to retain admission for. Leave the
+        // original size hint intact until entry captures representation length.
+        if long_stream || head {
             return Ok(response);
         }
         // Keep admission through the last buffered output byte. Hyper can own
@@ -687,6 +705,15 @@ impl AsRef<[u8]> for AdmittedBytes {
     }
 }
 fn static_asset(state: &State, path: &str, method: &Method) -> Result<Response<Body>> {
+    if *method == Method::OPTIONS {
+        // Express's wildcard GET route supplies automatic OPTIONS outside the
+        // API. API and MCP methods retain their own authenticated responses.
+        return Ok(Response::builder()
+            .header("allow", "GET, HEAD")
+            .header("content-type", "text/plain")
+            .body(full("GET, HEAD"))
+            .unwrap());
+    }
     if !matches!(*method, Method::GET | Method::HEAD) {
         return Err(GatewayError::new("NOT_FOUND"));
     }
@@ -711,11 +738,7 @@ fn static_asset(state: &State, path: &str, method: &Method) -> Result<Response<B
     };
     Ok(Response::builder()
         .header("content-type", mime)
-        .body(full(if *method == Method::HEAD {
-            Bytes::new()
-        } else {
-            Bytes::from_static(asset.1)
-        }))
+        .body(full(Bytes::from_static(asset.1)))
         .unwrap())
 }
 
@@ -821,6 +844,13 @@ async fn dispatch(
             body.map_err(|never| match never {}).boxed_unsync(),
         ));
     }
+    // Preserve the original method for authentication, request budgets and MCP.
+    // Only regular REST GET handlers inherit Express's HEAD behavior.
+    let method = if method == Method::HEAD {
+        Method::GET
+    } else {
+        method
+    };
     let mut segments = path
         .strip_prefix("/api/v1/")
         .unwrap_or("")

@@ -28,6 +28,9 @@ jobs:
       - run: cargo test --locked --features embedded-web
       - run: cargo test --locked --test legacy_compat -- --ignored
       - run: cargo build --locked --features embedded-web
+      - name: Original and native HTTP methods and offline CLI contract
+        shell: bash
+        run: KVMHELM_TEST_BINARY="target/debug/kvmhelm${{ runner.os == 'Windows' && '.exe' || '' }}" node scripts/native-admin-contract-interop.mjs
       - run: npx playwright install --with-deps chromium
       - run: npm run test:reference
       - name: Original layout acceptance against the isolated reference

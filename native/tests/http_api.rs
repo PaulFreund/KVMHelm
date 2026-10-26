@@ -54,7 +54,13 @@ impl Fixture {
         .unwrap();
         core.load().await.unwrap();
         let device=core.save_device(&owner,json!({"name":"HTTP simulator","driver_id":"simulator","transport":"simulator","media_profile":"warm","minimum_action_latency_ms":0}),None,None).await.unwrap();
-        let server = Server::bind(core.clone(), options, &[]).await.unwrap();
+        let server = Server::bind(
+            core.clone(),
+            options,
+            &[("/index.html", b"<html>fixture</html>")],
+        )
+        .await
+        .unwrap();
         let base = format!("http://{}", server.address);
         let http = Client::builder()
             .no_proxy()
@@ -124,6 +130,132 @@ async fn until(condition: impl Fn() -> bool) {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn head_preserves_get_headers_authentication_and_readiness_without_a_body() {
+    let f = Fixture::new().await;
+    for path in ["/healthz", "/readyz", "/", "/overview", "/api/v1/me"] {
+        let get = f.request(path, Method::GET, None).await;
+        let mime = get.headers()["content-type"].clone();
+        let length = get.bytes().await.unwrap().len();
+        let head = f.request(path, Method::HEAD, None).await;
+        assert_eq!(head.status(), 200, "{path}");
+        assert_eq!(head.headers()["content-type"], mime);
+        assert_eq!(head.headers()["content-length"], length.to_string());
+        assert!(head.bytes().await.unwrap().is_empty());
+    }
+    let denied = f
+        .with_token("/api/v1/devices", Method::HEAD, None, "invalid")
+        .await;
+    assert_eq!(denied.status(), 401);
+    assert!(denied.bytes().await.unwrap().is_empty());
+    let reader = f
+        .core
+        .auth
+        .create(
+            json!({"name":"reader","scopes":["devices:read"],"devices":["*"]}),
+            None,
+        )
+        .await
+        .unwrap();
+    let denied = f
+        .with_token("/api/v1/tokens", Method::HEAD, None, &reader.token)
+        .await;
+    assert_eq!(denied.status(), 403);
+    assert!(denied.bytes().await.unwrap().is_empty());
+    for path in ["/healthz", "/readyz", "/", "/overview"] {
+        let response = f
+            .http
+            .request(Method::OPTIONS, format!("{}{path}", f.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["allow"], "GET, HEAD");
+        assert_eq!(response.text().await.unwrap(), "GET, HEAD");
+    }
+    assert_eq!(
+        f.request("/api/v1/devices", Method::OPTIONS, None)
+            .await
+            .status(),
+        404
+    );
+    f.store.close().await.unwrap();
+    let response = f
+        .http
+        .head(format!("{}/readyz", f.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 503);
+    assert!(response.bytes().await.unwrap().is_empty());
+    f.close().await;
+}
+
+#[tokio::test]
+async fn head_streams_release_subscriptions_and_media_consumers_immediately() {
+    let f = Fixture::new().await;
+    let opened = f.open().await;
+    let id = opened["structuredContent"]["session"]["session_id"]
+        .as_str()
+        .unwrap();
+    let media = f.core.get(&f.id).unwrap().media.clone();
+    // More than the per-token stream limit, using the same live HTTP client.
+    for _ in 0..70 {
+        for path in [
+            format!("/api/v1/sessions/{id}/video"),
+            "/api/v1/events".into(),
+        ] {
+            let response = f.request(&path, Method::HEAD, None).await;
+            assert_eq!(response.status(), 200);
+            assert!(response.bytes().await.unwrap().is_empty());
+            assert_eq!(media.consumer_count(), 1);
+        }
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+async fn head_frames_keep_the_original_control_budget_separate_from_get_media() {
+    let f = Fixture::limited(Options {
+        port: 0,
+        control_per_minute: 2,
+        media_per_minute: 1,
+        ..Options::default()
+    })
+    .await;
+    let opened = f.open().await;
+    let id = opened["structuredContent"]["session"]["session_id"]
+        .as_str()
+        .unwrap();
+    let path = format!("/api/v1/sessions/{id}/frame");
+    let head = f.request(&path, Method::HEAD, None).await;
+    assert_eq!(head.status(), 200);
+    assert_eq!(head.headers()["content-type"], "image/png");
+    assert!(head.headers().contains_key("x-kvmhelm-frame"));
+    assert!(
+        head.headers()["content-length"]
+            .to_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap()
+            > 8
+    );
+    assert!(head.bytes().await.unwrap().is_empty());
+    assert_eq!(
+        f.request("/api/v1/devices", Method::GET, None)
+            .await
+            .status(),
+        429
+    );
+    assert_eq!(f.request(&path, Method::GET, None).await.status(), 200);
+    assert_eq!(f.request(&path, Method::GET, None).await.status(), 429);
+    assert_eq!(
+        f.request("/healthz", Method::HEAD, None).await.status(),
+        200
+    );
+    f.close().await;
 }
 
 async fn mcp_request(

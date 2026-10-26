@@ -532,6 +532,10 @@ impl Core {
             .collect())
     }
     pub async fn load(self: &Arc<Self>) -> Result<()> {
+        self.load_devices().await?;
+        self.plugins().load().await
+    }
+    pub(crate) async fn load_devices(self: &Arc<Self>) -> Result<()> {
         let core = self.clone();
         self.configuration
             .run_owned(async move {
@@ -543,8 +547,7 @@ impl Core {
                 }
                 Ok(())
             })
-            .await?;
-        self.plugins().load().await
+            .await
     }
     pub fn plugins(self: &Arc<Self>) -> Arc<crate::plugins::Host> {
         self.plugins

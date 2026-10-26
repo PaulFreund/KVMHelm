@@ -1,5 +1,5 @@
-//! Native KVMHelm components. See docs/rust-port.md for the integration status.
-//! The TypeScript daemon remains the complete reference until native parity is verified.
+//! Native KVMHelm runtime. See docs/rust-port.md for contracts and validation.
+//! The original TypeScript daemon is isolated in the pinned test reference.
 
 pub mod auth;
 pub mod cli;
