@@ -363,10 +363,55 @@ try {
     name: "KVM-Bildschirm Desktop fixture",
     exact: true,
   });
+  if (!reference)
+    await page.route(
+      "**/api/v1/tools/computer_control",
+      async (route) => {
+        const args = route.request().postDataJSON();
+        assert.equal(args.operation, "acquire");
+        const closed = await request(
+          "/tools/close_computer",
+          "POST",
+          { session_id: args.session_id },
+          route.request().headers()["x-kvmhelm-client"],
+        );
+        assert.ok(
+          closed.structuredContent.ok ||
+            closed.structuredContent.error.code === "SESSION_LOST",
+        );
+        await route.fulfill({
+          json: {
+            isError: true,
+            content: [],
+            structuredContent: {
+              ok: false,
+              frames: [],
+              error: {
+                code: "SESSION_LOST",
+                message: "Session closed by a configuration change",
+              },
+            },
+          },
+        });
+      },
+      { times: 1 },
+    );
   await page
     .getByRole("button", { name: "Steuerung übernehmen", exact: true })
     .click();
-  await expect(target).toBeFocused();
+  try {
+    await expect(target).toBeFocused();
+  } catch (error) {
+    console.error(
+      "Control acquisition state",
+      JSON.stringify({
+        alerts: await page.getByRole("alert").allTextContents(),
+        toolbar: await page.locator(".control-toolbar").innerText(),
+        sessions: await request("/sessions"),
+      }),
+    );
+    throw error;
+  }
   const batchesBeforeKeyboard = (await request("/diagnostics")).metrics.batches;
   await page.keyboard.press("a");
   await until(
@@ -673,7 +718,7 @@ try {
       );
     }
   console.log(
-    `${reference ? "Reference" : "Native"} Vue acceptance: environment/flag precedence, fractional replay budget, session limit, create/edit/CAS/delete, keyboard/focus, safe paste preview, special keys, mouse/wheel, sizing/fullscreen, journal rotation, restart/SSE without control reacquisition, scoped token creation/revoke, diagnostics and mobile touch/drag passed`,
+    `${reference ? "Reference" : "Native"} Vue acceptance: environment/flag precedence, fractional replay budget, session limit, create/edit/CAS/delete, keyboard/focus, safe paste preview, special keys, mouse/wheel, sizing/fullscreen, journal rotation, restart/SSE without control reacquisition, scoped token creation/revoke, diagnostics and mobile touch/drag passed${reference ? "" : "; no-video keyboard/mouse, uncertain-input recovery without replay and known session-loss recovery passed"}`,
   );
 } catch (error) {
   console.error("Vue acceptance failed:", error);

@@ -18,8 +18,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-const { imagePresentation, instructions } =
-  await referenceImport("dist/server/mcp.js");
+const { imagePresentation } = await referenceImport("dist/server/mcp.js");
 
 assert.ok(
   process.env.KVMHELM_TEST_BINARY,
@@ -246,12 +245,27 @@ try {
   });
   await http.connect(upstream);
   await stdio.connect(bridge);
-  assert.equal(http.getInstructions(), instructions);
-  assert.equal(stdio.getInstructions(), instructions);
+  let expectedMetadata;
+  if (referenceDaemon) {
+    const original = spawnSync(
+      process.execPath,
+      [resolve("scripts/rust-compat-fixture.mjs"), "mcp-contract"],
+      {
+        cwd: resolve("."),
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
+    assert.equal(original.status, 0, original.stderr);
+    expectedMetadata = JSON.parse(original.stdout);
+  } else {
+    expectedMetadata = JSON.parse(
+      await readFile(resolve("native/src/mcp-contract.json"), "utf8"),
+    );
+  }
+  assert.equal(http.getInstructions(), expectedMetadata.instructions);
+  assert.equal(stdio.getInstructions(), expectedMetadata.instructions);
   assert.equal((await http.listTools()).tools.length, 6);
-  const expectedMetadata = JSON.parse(
-    await readFile(resolve("native/src/mcp-contract.json"), "utf8"),
-  );
   assert.deepEqual((await http.listTools()).tools, expectedMetadata.tools);
   assert.deepEqual(http.getServerCapabilities(), expectedMetadata.capabilities);
   assert.deepEqual(stdio.getServerCapabilities(), { tools: {} });

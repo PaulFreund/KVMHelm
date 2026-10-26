@@ -174,24 +174,38 @@ export function useComputer(
       }
     } else timer = setTimeout(poll, retry);
   }
+  async function openControl() {
+    await open("control");
+    control.value = !!session.value;
+    error.value = "";
+    refresh();
+  }
   async function acquire() {
     if (busy.value || disposed) return;
     busy.value = true;
     cancelInputs();
     try {
       if (!session.value) {
-        await open("control");
-        control.value = !!session.value;
-        error.value = "";
-        refresh();
+        await openControl();
         return;
       }
       const releasing = control.value;
-      const result = await tool("computer_control", {
-        session_id: session.value.session_id,
-        request_id: crypto.randomUUID(),
-        operation: releasing ? "release" : "acquire",
-      });
+      let result;
+      try {
+        result = await tool("computer_control", {
+          session_id: session.value.session_id,
+          request_id: crypto.randomUUID(),
+          operation: releasing ? "release" : "acquire",
+        });
+      } catch (e) {
+        if (!releasing && e instanceof ApiError && e.code === "SESSION_LOST") {
+          session.value = undefined;
+          controlReference.value = undefined;
+          await openControl();
+          return;
+        }
+        throw e;
+      }
       control.value = !releasing;
       show(result);
       if (result.structuredContent.session_closed) session.value = undefined;
