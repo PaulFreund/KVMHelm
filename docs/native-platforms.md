@@ -255,10 +255,27 @@ akzeptiert die konkrete ASCII-Zeile, kein vollständiges US-International
 mit toten Tasten/Unicode. Zeile, Thread und Pluginprüfungen stehen in der
 [Reviewvorlage](native-review.md). Kein neuer Build oder WSL-Lauf war nötig.
 
-Die anschließende UI-Gegenprüfung findet im laufenden Release einen bisher
+Die anschließende UI-Gegenprüfung fand im damaligen Release einen bisher
 nicht geprüften Klick-/Drag-Unterschied bei nur einem Pixel Mausbewegung.
-Quellkorrektur, 17 gezielte Handlerprüfungen und Browserregression sind
-vorbereitet; Typecheck und Queue-Tests bestehen. Ein neues eingebettetes
-Release mit dieser Korrektur ist noch nicht gebaut oder abgenommen.
-Details und die benötigte erneute Buildfreigabe stehen in der
+Quellkorrektur, 17 gezielte Handlerprüfungen, Typecheck und Queue-Tests
+bestehen. Nach den zusätzlichen Nutzerfreigaben aus Kommentaren 52 und 56
+wurden auf AMBOSS nacheinander genau die beiden genehmigten Full-Builds
+`91646c3` und `17bc3bc` ausgeführt: je ein Cargo-Job, BelowNormal, mindestens
+vier GiB freier RAM, kein WSL. Beide temporären Aufgaben und alle eigenen
+Build-/Transferprozesse sind beendet beziehungsweise entfernt.
+
+Das gemeinsame Release `17bc3bc` enthält zusätzlich den gewünschten
+markanteren Browserton. Es besteht mit allen 482 Prüfsummen und Eingabehashes,
+vollständiger Vue-Abnahme einschließlich Klickregression, MCP-HTTP/stdio
+und Plugin-Interop. Das eingebettete Tonmodul wurde über Pluginbenachrichtigung,
+SSE und Vue tatsächlich mit Chromium offline gerendert: sechs Töne über etwa
+1,5 Sekunden, stärkerer Pegel ohne Clipping, begrenzte Überlagerung,
+Knotenfreigabe und keine historische Wiedergabe nach Neuladen.
+
+Seit 09:14:58 UTC läuft das geprüfte Release im vorhandenen Testdienst auf
+ENVY als PID 64316. Vorherige private Sicherung und freie Kontrolle sind
+bestätigt; PAT, Geräte-/Pluginkonfiguration und dauerhafte Tokenfelder sind
+erhalten. Lokale/LAN-TLS-Prüfungen bestehen. Keine neue physische,
+Linux-/macOS-/SCM-/Container- oder Ressourcenabnahme ist damit verbunden.
+Artefakthashes und genaue Abgrenzung stehen in der
 [Reviewvorlage](native-review.md#ui--mcp-abgleich-nach-der-rückfrage).

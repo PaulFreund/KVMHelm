@@ -211,7 +211,7 @@ Das Archiv liegt lokal unter
 Das Binary ist 25.641.984 Bytes groß, SHA-256
 `9da3f3067c1bb6b9b7632be0e869e27874cde3371a4f6485dbe6ccb1b5f1b199`.
 
-Der bestehende Testdaemon verwendet nun dieses Release mit erhaltenen
+Der bestehende Testdaemon verwendete nach diesem ersten Wechsel das Release mit erhaltenen
 Daten/Secrets nach privater Sicherung und ohne aktive Kontrolllease beim
 Wechsel. Readiness, Web und authentifizierte API bestehen lokal und über
 geprüftes LAN-TLS. Die Tastaturbelegung wurde bei diesem Releasewechsel
@@ -252,8 +252,8 @@ als einzige Vertragsänderung die dokumentierte Erweiterung ohne Video:
 optionale `reference.frame_id` und ergänzte Hilfetexte; Ergebnisse liefern
 zusätzlich `control_reference` und gegebenenfalls `video_error`.
 
-Die gezielte Gegenprüfung am 27. Oktober findet jedoch eine zusätzliche
-UI-Regression im laufenden Release aus `87be963`: Nach gedrückter linker
+Die gezielte Gegenprüfung am 27. Oktober fand eine zusätzliche
+UI-Regression im damaligen Release aus `87be963`: Nach gedrückter linker
 Maustaste und einem CSS-Pixel Bewegung sendet dieses Release `drag`, das
 unveränderte Node-Original dagegen `click`. Bei der Umstellung auf
 normalisierte HID-Koordinaten war die Vier-Pixel-Grenze für Klick/Drag auf
@@ -265,13 +265,68 @@ normalisiert. Ein entsprechender Browser-Regressionsfall ist ergänzt.
 Die tatsächlichen `coords`-/`move`-Quellfunktionen stimmen in 15 Fällen über
 drei Bildskalierungen mit dem Original überein; zwei weitere Fälle prüfen
 die Grenze ohne Bild. Vue-Typecheck ohne Ausgabe, vier Queue-Tests und
-`git diff --check` bestehen. Diese Quellprüfungen ersetzen keinen neuen
-eingebetteten Browserbundle-/Release-Nachweis. Das laufende Release wurde
-nicht verändert und enthält die Korrektur noch nicht. Seine bisherige
-Browserabnahme hatte diesen kleinen Mausbewegungsfall nicht geprüft.
-Wegen der verbrauchten einmaligen Buildfreigabe bleibt ein weiteres
-Windows-Release samt Ausführung des ergänzten Browserfalls bis zu einer
-neuen ausdrücklichen Nutzerfreigabe offen.
+`git diff --check` bestehen. Die damalige Browserabnahme hatte diesen kleinen
+Mausbewegungsfall nicht geprüft. Die unten dokumentierte zusätzliche
+Nutzerfreigabe und gemeinsame Release-Abnahme schließen die Nacharbeit ab:
+Der ergänzte Browserfall bestätigt jetzt auch am eingebetteten Bundle wieder
+`click` bei nur einem Pixel Bewegung.
+
+## Markanter Benachrichtigungston und gemeinsames Release
+
+Der zusätzlich gewünschte lautere Browserton ist in `17bc3bc` umgesetzt:
+drei abwechselnde Zweitonfolgen mit insgesamt sechs Impulsen über etwa
+1,5 Sekunden, markanter Rechteckklang und Spitzenverstärkung 0,55 statt
+0,14. Überlappende Benachrichtigungen teilen den laufenden Alarm; ihre
+sichtbaren Meldungen bleiben erhalten. Jeder Ton und sein Gain-Knoten
+werden anschließend getrennt. Die bisherige Aktivierung durch eine
+Browserinteraktion und das stille Verhalten historischer Meldungen bleiben
+erhalten. Das separate Transkriptionsplugin wurde dafür nicht verändert.
+
+Kommentar 52 erlaubte genau einen zusätzlichen Windows-Full-Build von
+`91646c3` auf AMBOSS. Dieser Lauf wurde von 08:43:55 bis 08:49:06 UTC
+erfolgreich ausgeführt. Als der Tonwunsch während dieses Laufs eintraf,
+blieb dessen Quellstand fest. Kommentar 56 erlaubte ausdrücklich genau
+einen weiteren Full-Build aus `17bc3bc`; er lief von 09:00:45 bis 09:05:05 UTC.
+Beide Läufe hatten einen Cargo-Job, BelowNormal-Priorität, mindestens vier
+GiB freien RAM und kein WSL. Die Einmalbelege erfassen jeweils genau einen
+Paket-/Cargo-Aufruf. Keine parallelen oder automatischen Ersatzbuilds.
+Die temporären Windows-Aufgaben sind entfernt, eigene Build- und
+Transferprozesse beendet. `91646c3` wurde vor der gemeinsamen Abnahme nicht
+zwischenzeitlich in den Testdienst übernommen.
+
+Das gemeinsame Windows-x64-Full-Paket aus dem sauberen Stand
+`17bc3bc1aa42a05a1e70b0365d83d83a20057ab7` besteht mit allen 482 Prüfsummen,
+den abgeglichenen Lock-/Paketierungs-/Helfer-/Webnotizhashes sowie der
+vollständigen Vue-Abnahme einschließlich Klickregression, MCP über
+HTTP/stdio und vollständiger Plugin-Interop, jeweils ohne weitere
+Kompilierung. Auch das tatsächlich eingebettete Tonmodul ist über die
+Kette Plugin-IPC → SSE → Vue geprüft: Zwei echte Fixture-Benachrichtigungen
+erzeugen zusammen sechs Töne. Chromium rendert diese offline mit einem
+Spitzenpegel von 0,5493 und etwa 1,50 Sekunden Dauer, ohne digitale
+Übersteuerung; alle zwölf Audio-/Gain-Knoten werden getrennt. Nach Neuladen
+bleiben historische Meldungen still. Dieser Nachweis verwendet keine
+Lautsprecher- oder Mikrofonaufnahme und bewertet keine physische Raumlautstärke.
+
+Das aktuelle Archiv liegt unter
+`target/packages/sound-17bc3bc/kvmhelm-0.1.0-x86_64-pc-windows-msvc-full.tar.gz`
+(76.058.289 Bytes, SHA-256
+`f36138d2580bc339b5e4eb8dcf0f232822802abd1fc69a0a5b0c03837dced228`).
+Binary: 25.641.984 Bytes, SHA-256
+`15f420e2d22d0ee29fe98551f89097c940bb9e4a40eab184b31142894cb7acfe`.
+Die statischen CRT-Eigenschaften und optionalen Node-/FFmpeg-Helfer bleiben
+wie dokumentiert erhalten.
+
+Der bestehende Testdaemon auf ENVY verwendet seit 09:14:58 UTC dieses
+geprüfte Release als PID 64316 mit `index-D-B-jGJQ.js`. Der vorherige
+Daemon wurde ohne aktive Kontrolllease geordnet beendet; Daten und Secrets
+sind vorher privat gesichert. Lokale und LAN-TLS-Readiness, Web und
+authentifizierte API bestehen. Gerätekonfiguration, Pluginregistrierung,
+PAT und dauerhafte Tokenidentität/Berechtigungen stimmen mit dem vorherigen
+Zustand beziehungsweise der Sicherung überein. Das vorhandene Plugin meldet
+`running`, TestLaptop bleibt auf `us`. Bereits geöffnete Browserseiten
+benötigen Neuladen für den neuen Ton. Dieser reine UI-Nachtrag wiederholt
+nicht den physischen MCP-Lauf aus `87be963` und erzeugt keine neuen
+Ressourcen-, Linux-, macOS-, Dienst- oder Containernachweise.
 
 ## Pluginprüfung am Release
 
