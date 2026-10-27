@@ -254,3 +254,11 @@ Entsperren, einmalige exakte ASCII-Eingabe mit 70 Zeichen und Auswahl von
 akzeptiert die konkrete ASCII-Zeile, kein vollständiges US-International
 mit toten Tasten/Unicode. Zeile, Thread und Pluginprüfungen stehen in der
 [Reviewvorlage](native-review.md). Kein neuer Build oder WSL-Lauf war nötig.
+
+Die anschließende UI-Gegenprüfung findet im laufenden Release einen bisher
+nicht geprüften Klick-/Drag-Unterschied bei nur einem Pixel Mausbewegung.
+Quellkorrektur, 17 gezielte Handlerprüfungen und Browserregression sind
+vorbereitet; Typecheck und Queue-Tests bestehen. Ein neues eingebettetes
+Release mit dieser Korrektur ist noch nicht gebaut oder abgenommen.
+Details und die benötigte erneute Buildfreigabe stehen in der
+[Reviewvorlage](native-review.md#ui--mcp-abgleich-nach-der-rückfrage).

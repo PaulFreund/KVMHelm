@@ -239,6 +239,40 @@ Kontrolle und eigene Session wurden freigegeben. Das ist die Abnahme dieser
 kompatiblen ASCII-Zeile, keine vollständige US-International-Unterstützung
 für tote Tasten oder Unicode. Die vorhandenen Layouts bleiben `de` und `us`.
 
+## UI-/MCP-Abgleich nach der Rückfrage
+
+Die vorhandene Vue-Oberfläche ist erhalten, aber nicht bytegleich mit dem
+Node-Ausgangsstand. Die gezielten Änderungen betreffen die Eingabesteuerung
+ohne Bild, normalisierte HID-Koordinaten, Sessionverlust und die verspätete
+Bestätigung bereits angenommener Eingaben nach Fokusverlust. Die vorhandenen
+Verwaltungs-, Medien-, Plugin- und Bedienungsabläufe sind weiterhin Gegenstand
+der Browserabnahme. Alle sechs MCP-Toolnamen und bildbezogenen Aufrufe bleiben
+erhalten. Der erneute Metadatenvergleich gegen das echte Original bestätigt
+als einzige Vertragsänderung die dokumentierte Erweiterung ohne Video:
+optionale `reference.frame_id` und ergänzte Hilfetexte; Ergebnisse liefern
+zusätzlich `control_reference` und gegebenenfalls `video_error`.
+
+Die gezielte Gegenprüfung am 27. Oktober findet jedoch eine zusätzliche
+UI-Regression im laufenden Release aus `87be963`: Nach gedrückter linker
+Maustaste und einem CSS-Pixel Bewegung sendet dieses Release `drag`, das
+unveränderte Node-Original dagegen `click`. Bei der Umstellung auf
+normalisierte HID-Koordinaten war die Vier-Pixel-Grenze für Klick/Drag auf
+dieser neuen Skala ausgewertet worden. Die Korrektur im Quellcode wertet
+diese Grenze wieder in Bildpixeln aus; ohne Bild verwendet sie die
+Bildschirmfläche in CSS-Pixeln. Die gesendeten HID-Koordinaten bleiben
+normalisiert. Ein entsprechender Browser-Regressionsfall ist ergänzt.
+
+Die tatsächlichen `coords`-/`move`-Quellfunktionen stimmen in 15 Fällen über
+drei Bildskalierungen mit dem Original überein; zwei weitere Fälle prüfen
+die Grenze ohne Bild. Vue-Typecheck ohne Ausgabe, vier Queue-Tests und
+`git diff --check` bestehen. Diese Quellprüfungen ersetzen keinen neuen
+eingebetteten Browserbundle-/Release-Nachweis. Das laufende Release wurde
+nicht verändert und enthält die Korrektur noch nicht. Seine bisherige
+Browserabnahme hatte diesen kleinen Mausbewegungsfall nicht geprüft.
+Wegen der verbrauchten einmaligen Buildfreigabe bleibt ein weiteres
+Windows-Release samt Ausführung des ergänzten Browserfalls bis zu einer
+neuen ausdrücklichen Nutzerfreigabe offen.
+
 ## Pluginprüfung am Release
 
 Am 27. Oktober besteht `scripts/native-plugin-interop.mjs` zusätzlich am

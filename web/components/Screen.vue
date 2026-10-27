@@ -57,6 +57,7 @@ const keyboard = ref(false),
   fullscreen = ref(false),
   micMode = ref("toggle");
 let drag: { x: number; y: number }[] = [],
+  dragOrigin = { x: 0, y: 0 },
   pointer: number | undefined,
   moved = false;
 let clickTimer: ReturnType<typeof setTimeout> | undefined;
@@ -75,16 +76,21 @@ async function takeControl() {
   await acquire();
   if (control.value) focusTarget();
 }
-function coords(e: MouseEvent | WheelEvent) {
-  const b = (image.value ?? viewport.value)!.getBoundingClientRect();
+function coords(e: MouseEvent | WheelEvent, normalized = true) {
+  const b = (image.value ?? viewport.value)!.getBoundingClientRect(),
+    width = normalized ? 32768 : (frame.value?.width ?? b.width),
+    height = normalized ? 32768 : (frame.value?.height ?? b.height);
   return {
     x: Math.max(
       0,
-      Math.min(32767, Math.floor(((e.clientX - b.left) / b.width) * 32768)),
+      Math.min(width - 1, Math.floor(((e.clientX - b.left) / b.width) * width)),
     ),
     y: Math.max(
       0,
-      Math.min(32767, Math.floor(((e.clientY - b.top) / b.height) * 32768)),
+      Math.min(
+        height - 1,
+        Math.floor(((e.clientY - b.top) / b.height) * height),
+      ),
     ),
   };
 }
@@ -95,13 +101,16 @@ function down(e: PointerEvent) {
   pointer = e.pointerId;
   moved = false;
   (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  dragOrigin = coords(e, false);
   drag = [coords(e)];
 }
 function move(e: PointerEvent) {
   if (!control.value) return;
   const p = coords(e);
   if (pointer === e.pointerId && drag.length) {
-    if (Math.abs(p.x - drag[0].x) + Math.abs(p.y - drag[0].y) > 4) moved = true;
+    const pixel = coords(e, false);
+    if (Math.abs(pixel.x - dragOrigin.x) + Math.abs(pixel.y - dragOrigin.y) > 4)
+      moved = true;
     if (drag.length < 255) drag.push(p);
   } else if (keyboard.value && Date.now() - hoverAt > 120) {
     hoverAt = Date.now();

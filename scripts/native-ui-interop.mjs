@@ -566,6 +566,33 @@ try {
       ),
     "Right click",
   );
+  // Preserve the original image-pixel threshold after normalizing HID positions.
+  // A small hand movement during a click must not become a remote drag.
+  const clickBox = await image.boundingBox();
+  assert.ok(clickBox);
+  await page.mouse.move(clickBox.x + 100, clickBox.y + 100);
+  const jitterStart = inputs.length;
+  await page.mouse.down();
+  await page.mouse.move(clickBox.x + 101, clickBox.y + 100);
+  await page.mouse.up();
+  await until(
+    () =>
+      inputs
+        .slice(jitterStart)
+        .some((r) =>
+          r.actions.some((a) => a.type === "click" || a.type === "drag"),
+        ),
+    "Click with slight pointer movement",
+  );
+  assert.deepEqual(
+    inputs
+      .slice(jitterStart)
+      .flatMap((r) => r.actions)
+      .filter((a) => a.type === "click" || a.type === "drag")
+      .map((a) => a.type),
+    ["click"],
+    "A one-pixel movement must retain the original click/drag distinction",
+  );
   await image.hover({ position: { x: 120, y: 90 } });
   await page.mouse.wheel(0, 120);
   await until(
