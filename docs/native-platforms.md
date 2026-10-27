@@ -242,7 +242,15 @@ Entsperren funktioniert. Die neue Notepad-Zeile kommt vollständig mit
 korrekter Groß-/Kleinschreibung und Wiederholungen an; die Auswahl von genau
 „Blue“ per Maus ist im Bild bestätigt. Kontrolle und eigene Session wurden
 freigegeben. Die verbliebenen Zeichenersetzungen entsprechen einem deutschen
-Geräteprofil bei einer Zielbelegung wie US-International. Der Abgleich ist im
-Ticket gefragt; ein vollständig korrekter Text ist noch nicht abgenommen.
-Synthetische Protokoll- und Plattformprüfungen ersetzen diesen fehlenden
-Konfigurations- und Bedienungsnachweis nicht.
+Geräteprofil bei einer Zielbelegung wie US-International.
+
+Nach Nutzerbestätigung von US-International wurde am 27. Oktober das
+KVMHelm-Geräteprofil ohne aktive Kontrolllease von `de` auf `us` abgeglichen;
+andere Konfiguration und Secrets blieben erhalten. Der erneute unabhängige
+Agentlauf am finalen Windows-Release verwendet alle sechs MCP-Tools
+(19 Aufrufe): normale Eingaben ohne Anfangsbild, anschließendes echtes Bild,
+Entsperren, einmalige exakte ASCII-Eingabe mit 70 Zeichen und Auswahl von
+„Blue“ sind visuell bestätigt. Kontrolle/Session sind freigegeben. Das
+akzeptiert die konkrete ASCII-Zeile, kein vollständiges US-International
+mit toten Tasten/Unicode. Zeile, Thread und Pluginprüfungen stehen in der
+[Reviewvorlage](native-review.md). Kein neuer Build oder WSL-Lauf war nötig.

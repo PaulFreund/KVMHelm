@@ -174,12 +174,12 @@ an; Groß-/Kleinschreibung und Wiederholungen stimmen. Die Auswahl von exakt
 „Blue“ per Maus wurde im Bild bestätigt. Vorherige ungespeicherte Dokumente
 blieben erhalten; Kontrolle und eigene Session wurden freigegeben.
 
-Die vollständige Textkorrektheit ist dennoch nicht abgenommen: Das Gerät ist
+Die vollständige Textkorrektheit war in diesem Lauf noch nicht abgenommen: Das Gerät war
 mit `keyboard_layout=de` konfiguriert, die sichtbaren Ersetzungen entsprechen
 dagegen US-International (`typing` → `tzping`, `-` → `/`, `äöü` → `';[`).
 Diese Zuordnung entspricht der ursprünglichen Implementierung. Die gewünschte
-Abstimmung zwischen Geräteprofil und Zielbelegung ist im Ticket gefragt; sie
-wurde noch nicht durch eine Konfigurationsänderung vorweggenommen.
+Abstimmung zwischen Geräteprofil und Zielbelegung war im Ticket gefragt;
+die unten dokumentierte Nutzerantwort und Folgeprüfung lösen diesen Abgleich.
 
 Der Testdaemon wurde mit vorhandenen Daten/Secrets nach privater Sicherung
 aktualisiert. Loopback und LAN-TLS, Readiness, Web und Anmeldung bestehen;
@@ -214,10 +214,52 @@ Das Binary ist 25.641.984 Bytes groß, SHA-256
 Der bestehende Testdaemon verwendet nun dieses Release mit erhaltenen
 Daten/Secrets nach privater Sicherung und ohne aktive Kontrolllease beim
 Wechsel. Readiness, Web und authentifizierte API bestehen lokal und über
-geprüftes LAN-TLS. Die Tastaturbelegung wurde dabei nicht geändert;
-der reale exakte Typetest bleibt bis zur Nutzerentscheidung offen.
+geprüftes LAN-TLS. Die Tastaturbelegung wurde bei diesem Releasewechsel
+nicht geändert; die anschließende Nutzerantwort ist im folgenden Lauf berücksichtigt.
 Diese Nacharbeit ist kein neuer Ressourcenmesslauf und
 keine neue macOS-/Dienst-/Containerabnahme.
+
+Am 27. Oktober bestätigte der Nutzer US-International auf dem Ziel-Laptop.
+Das bestehende KVMHelm-Profil wurde ohne aktive Kontrolllease von `de` auf
+`us` geändert (Revision 4 → 5), alle anderen Gerätewerte und Secrets blieben
+erhalten. Der anschließende Lauf mit `gpt-6.1-sol`/`medium` am obigen
+Releasebinary verwendet alle sechs MCP-Tools über Streamable HTTP
+(19 Aufrufe, Thread `01a17c0c-f9a0-7771-9e94-3f6b2d40e3d7`). Ohne Anfangsbild
+übertragene normale Shift-Eingabe und Mausbewegung führten wieder zum
+sichtbaren Sperrbildschirm. Nach autorisiertem Entsperren kam diese Zeile
+einmalig in einem neuen Notepad-Dokument exakt mit 70 Zeichen an:
+
+```text
+TASK-0126 MCP typing check: Blue fox waves hello. AaAa 1122 yzYZ @ 42.
+```
+
+Frische Bilder bestätigen Zeichen, Groß-/Kleinschreibung und die Auswahl
+von exakt „Blue“ per Maus. Frühere ungespeicherte Tabs blieben erhalten;
+Kontrolle und eigene Session wurden freigegeben. Das ist die Abnahme dieser
+kompatiblen ASCII-Zeile, keine vollständige US-International-Unterstützung
+für tote Tasten oder Unicode. Die vorhandenen Layouts bleiben `de` und `us`.
+
+## Pluginprüfung am Release
+
+Am 27. Oktober besteht `scripts/native-plugin-interop.mjs` zusätzlich am
+fertigen Release aus `87be963`, ohne Neukompilierung: optionale Node-Runtime,
+echte Advanced-IPC-Buffer, Medien-/Geräte-/Berechtigungsgrenzen, Panels und
+Formularaktionen, Benachrichtigungen, Ereignisbudget, ungewisse Aktionen ohne
+Replay, CLI-Update, fehlende Healthantworten, langsame Empfänger,
+Crash-/Broker-Recovery, erzwungenes Stop und Ende des Prozessbaums.
+Diese Prüfung verwendet isolierte synthetische Gegenstellen.
+
+Auch die 20 deterministischen Tests des separat gepflegten lokalen
+Transkriptionsplugins aus `1c4e1ea` bestehen mit dem paketierten Node 24
+(keine ausgelassenen Tests): Unicode-/Phrasentreffer, Wildcards, Deduplication,
+Cooldown, begrenzte Historie, PCM-Konvertierung, parallele Quellen,
+Start-/Stop-/Fehlerverhalten, lokale Logpersistenz und das Providerprotokoll
+gegen einen Loopback-WebSocket. Das Repository wurde nicht verändert.
+Das installierte Plugin meldet im Release `running`; das belegt den
+Prozesszustand, keine aktive Transkription. Die vollständige aktuelle Kette
+Rust → physisches KVM-Zielaudio → echter OpenAI-Provider → Panel/Alarm ist
+nicht neu Ende zu Ende geprüft. Frühere Provider-Livetests des Plugins am
+TypeScript-Gateway ersetzen diesen Nachweis nicht.
 
 ## Laufzeitmessung
 
@@ -249,8 +291,9 @@ exklusiven Host belegen keine Langzeit- oder Hardwareleistung.
 - Container: Dockerfile, Compose und Prüfjob vorhanden; Build/Lauf auf ENVY
   und WSL mangels Engine nicht ausgeführt.
 - Am physischen PiKVM sind Eingaben ohne Anfangsbild mit anschließendem Video,
-  Entsperren, vollständige Notepad-Eingabe und Mausauswahl sichtbar geprüft.
-  Exakte Textkorrektheit wartet auf den Abgleich der Tastaturbelegung.
+  Entsperren, exakte ASCII-Notepad-Eingabe und Mausauswahl am finalen Release
+  sichtbar geprüft. Vollständiges US-International mit toten Tasten/Unicode
+  ist damit nicht abgenommen. Die reale Transkriptionskette ist oben abgegrenzt.
   Comet-, JetKVM-, Audio- und Mikrofonpfade sind weiterhin ausschließlich mit
   synthetischen Gegenstellen geprüft.
 - Linuxnachweise gelten für Ubuntu 24.04/WSL2 x64; das gebaute Paket verlangt
