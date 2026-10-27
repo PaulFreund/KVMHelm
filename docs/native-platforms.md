@@ -1,6 +1,7 @@
 # Native Plattformabnahme
 
-Die Nachweise gehören zu TASK-0126 und zum Branch `port/task-0126-rust`.
+Die Nachweise gehören zu TASK-0126, entwickelt auf `port/task-0126-rust`
+und nach Nutzerfreigabe auf `main` übernommen.
 Ein Paketbau, ein lokaler Prozesslauf, ein Dienstlauf und eine Hardwareprüfung
 sind getrennte Ergebnisse. Die [Paketierungsanleitung](native-packaging.md)
 beschreibt Installation, Migration und Rollback; der
@@ -279,3 +280,16 @@ erhalten. Lokale/LAN-TLS-Prüfungen bestehen. Keine neue physische,
 Linux-/macOS-/SCM-/Container- oder Ressourcenabnahme ist damit verbunden.
 Artefakthashes und genaue Abgrenzung stehen in der
 [Reviewvorlage](native-review.md#ui--mcp-abgleich-nach-der-rückfrage).
+
+## ENVY-Dauerbetrieb nach Nutzerfreigabe
+
+Kommentar 59 gibt am 27. Oktober die Übernahme auf `main` und den dauerhaften
+ENVY-Betrieb frei. Das unveränderte geprüfte Release aus `17bc3bc` läuft nun
+über die Windows-Aufgabe `KVMHelm` mit S4U unter dem bisherigen Datenbesitzer
+in Session 0. Boot-/Anmeldetrigger und ein unbefristeter Minutentrigger sind
+aktiv. Der tatsächliche Prozessausfalltest besteht ohne expliziten Start:
+Readiness nach 4,23 Sekunden, genau ein neuer Daemon und keine alten eigenen
+Helfer. Daten, Secrets, PAT und Konfiguration sind erhalten; lokale und
+LAN-TLS-Prüfungen bestehen. Ein Hostneustart oder Windows-SCM-Lauf wurde damit
+nicht ausgeführt. Pfade und Wartung stehen in der
+[Betriebsanleitung](native-packaging.md#dauerbetrieb-auf-envy).

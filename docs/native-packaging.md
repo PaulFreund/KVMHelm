@@ -1,6 +1,7 @@
 # Native Pakete und Betrieb
 
-TASK-0126 bleibt bis zur Gesamtabnahme offen. Die Pakete enthalten den
+TASK-0126 wurde zur Übernahme auf `main` und zum ENVY-Dauerbetrieb freigegeben.
+Die Pakete enthalten den
 Rust-Daemon mit eingebauter Vue-Oberfläche. Auch `npm start` im Quellcheckout
 startet nun Rust (`npm run build:native` baut `target/release/kvmhelm`). Der
 ersetzte TypeScript-Server wird nur für Tests aus dem gepinnten Gitcommit in
@@ -120,8 +121,9 @@ Unter Unix wird auch SIGTERM geordnet verarbeitet.
   `serve`-Optionen. Konto und Registrierung legt der Betreiber fest.
   Außerhalb von SCM schlägt er vor dem Öffnen von Core/State fehl.
   Running folgt der Bereitschaft, Stopped der Core-/Store-Bereinigung.
-  Der SCM-Integrationstest ist auf disposable GitHub-Runner begrenzt;
-  auf ENVY wurde kein Dienst angelegt.
+  Der SCM-Integrationstest ist auf disposable GitHub-Runner begrenzt.
+  ENVY verwendet die unten beschriebene Windows-Aufgabe unter dem bisherigen
+  Datenbesitzer; der SCM-Einstieg wurde dort nicht ausgeführt.
 - Linux: `kvmhelm.service` ist eine systemd-Vorlage für einen zuvor angelegten
   Benutzer `kvmhelm`, `/opt/kvmhelm/current` und `/var/lib/kvmhelm`. Bootstrap
   unter diesem Account ausführen. `ProtectHome` verlangt Pluginprogramme
@@ -138,6 +140,63 @@ Readiness, Doctor und Beobachtung prüfen. Für Rollback wieder stoppen und alte
 Programmstand samt passendem Backup wählen. Niemals beide Versionen auf
 demselben Store starten. Sessions und Controlleases überleben keinen Neustart;
 Eingaben werden nicht nachgesendet. Extraktion registriert keinen Dienst.
+
+### Dauerbetrieb auf ENVY
+
+Am 27. Oktober 2026 wurde nach ausdrücklicher Nutzerfreigabe die Windows-Aufgabe
+`KVMHelm` eingerichtet. Sie verwendet S4U für `ENVY\Agent`, begrenzte Rechte
+und eine nichtinteraktive Session; das Windows-Kennwort wird nicht hinterlegt.
+Der bestehende Account behält Zugriff auf seine privaten Daten und das lokale
+Transkriptionsplugin. Die Registrierung erfolgt erhöht; der Daemon selbst
+verwendet die Einstellung `LeastPrivilege`.
+
+Das unveränderte, geprüfte Full-Release aus `17bc3bc` liegt unter
+`C:\Users\Agent\AppData\Local\KVMHelm\releases\17bc3bc`.
+Binary-SHA-256:
+`15f420e2d22d0ee29fe98551f89097c940bb9e4a40eab184b31142894cb7acfe`.
+Daten und Secrets bleiben ausdrücklich unter
+`C:\prj\KVMHelm\.kvmhelm\data` beziehungsweise `secrets`.
+Loopback bleibt `http://127.0.0.1:8765`, LAN mit vorhandenem Zertifikat
+`https://10.111.0.100:8766`. Es wird kein zweites Bootstrap ausgeführt.
+
+Die Aufgabe startet 30 Sekunden nach dem Booten, zehn Sekunden nach Anmeldung
+und über einen unbefristeten Minutentrigger. `IgnoreNew` verhindert parallele
+Aufgabeninstanzen; Ausfälle werden zusätzlich mit einer Minute Abstand bis
+zu 999-mal neu gestartet. Laufzeitlimit, Leerlauf- und Batterieabbruch sind
+deaktiviert; die Aufgabe ist nicht an Netzwerkerkennung oder eine interaktive
+Anmeldung gebunden. Der Minutentrigger greift auch nach einem regulären Ende.
+Ein tatsächlicher Prozessausfalltest bestätigte Wiederanlauf ohne expliziten
+Start nach 4,23 Sekunden sowie die Bereinigung des vorherigen Prozessbaums.
+Das ist kein ausgeführter Hostneustart- oder SCM-Test.
+
+Status und Readiness:
+
+```powershell
+Get-ScheduledTask -TaskName KVMHelm
+Get-ScheduledTaskInfo -TaskName KVMHelm
+& "$env:LOCALAPPDATA\KVMHelm\releases\17bc3bc\kvmhelm.exe" healthcheck --url http://127.0.0.1:8765
+```
+
+Für geplante Wartung in einer erhöhten PowerShell zuerst die Aufgabe
+deaktivieren, damit der Minutentrigger keinen Neustart während Backup oder
+Update auslöst. Kontrolle vorher freigeben, dann die Aufgabe stoppen und auf
+das Ende des eigenen Daemons und seiner Helfer warten. Erst danach Daten und
+Secrets gemeinsam sichern beziehungsweise das geprüfte Programm umstellen.
+
+```powershell
+Disable-ScheduledTask -TaskName KVMHelm
+Stop-ScheduledTask -TaskName KVMHelm
+# Nach abgeschlossenem Backup/Update und ohne zweiten Daemon:
+Enable-ScheduledTask -TaskName KVMHelm
+Start-ScheduledTask -TaskName KVMHelm
+```
+
+Die lokale Betriebsdefinition liegt in `.kvmhelm/ops/KVMHelm-task.xml`;
+Registrierungs-, Aktivierungs- und Wiederanlaufbelege bleiben zusammen mit
+den privaten Sicherungen außerhalb von Git. Der ursprüngliche Konsolenprozess
+wurde vor Übernahme geordnet beendet. Pluginregistrierung, Gerätekonfiguration,
+PAT und Secrets werden weiterverwendet. Die Aktivität einer Transkription wird
+nach einem Neustart weiterhin bewusst über die Oberfläche gestartet.
 
 ## Container
 

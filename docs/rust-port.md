@@ -186,7 +186,7 @@ target/debug/kvmhelm.exe healthcheck --url https://localhost:8765 --ca C:/protec
 target/debug/kvmhelm.exe doctor --url https://localhost:8765 --ca C:/protected/local-ca.pem --pat-file C:/protected/owner.pat
 ```
 
-Für eine spätere Übernahme zuerst den bisherigen Daemon stoppen und Daten- sowie Secretverzeichnis einschließlich Masterkey getrennt geschützt sichern. Native Abnahme mit einer separaten Kopie und ausdrücklich angegebenen Pfaden/Ports ausführen. Schema v1, Token-Hashes, Secretreferenzen und private PAT-Datei bleiben nutzbar; vorhandene Installationen benötigen kein erneutes Bootstrap. Live-Sessions, Controlleases und laufende Eingaben werden nicht übernommen. Ein Rückwechsel benötigt wieder einen gestoppten Daemon und dieselbe kompatible Datenkopie oder das geprüfte Backup. Die [Paketierung und Migrationsprüfung](native-packaging.md) verwenden isolierte Kopien; ein Produktivwechsel wurde nicht ausgeführt.
+Für eine spätere Übernahme zuerst den bisherigen Daemon stoppen und Daten- sowie Secretverzeichnis einschließlich Masterkey getrennt geschützt sichern. Native Abnahme mit einer separaten Kopie und ausdrücklich angegebenen Pfaden/Ports ausführen. Schema v1, Token-Hashes, Secretreferenzen und private PAT-Datei bleiben nutzbar; vorhandene Installationen benötigen kein erneutes Bootstrap. Live-Sessions, Controlleases und laufende Eingaben werden nicht übernommen. Ein Rückwechsel benötigt wieder einen gestoppten Daemon und dieselbe kompatible Datenkopie oder das geprüfte Backup. Die [Paketierung und Migrationsprüfung](native-packaging.md) verwenden isolierte Kopien; der spätere ENVY-Dauerbetrieb wurde am 27. Oktober mit Kommentar 59 ausdrücklich freigegeben und ist dort separat dokumentiert.
 
 ## Persistenz und Kompatibilität
 

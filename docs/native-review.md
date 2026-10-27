@@ -1,8 +1,10 @@
-# Native Portierung – Vorlage für die Nutzerabnahme
+# Native Portierung – Abnahme und Betrieb
 
-TASK-0126 liegt auf `port/task-0126-rust`. Ausgangsstand ist
-`b40b2dde246533a25a18148a6b59faced676d9ba`. Der Branch enthält den
-integrierten Rust-Daemon und die CLI mit der vorhandenen Vue-Oberfläche.
+TASK-0126 wurde am 27. Oktober 2026 mit Kommentar 59 zur Übernahme auf
+`main` und zum dauerhaften Betrieb auf ENVY freigegeben. Ausgangsstand ist
+`b40b2dde246533a25a18148a6b59faced676d9ba`. Der integrierte Rust-Daemon
+und die CLI mit der vorhandenen Vue-Oberfläche wurden vom Portierungsbranch
+ohne Konflikte auf `main` übernommen.
 Die [Funktionszuordnung](rust-port.md) verbindet die ursprünglichen Quellen
 mit Implementierung, Verträgen und ausgeführten Nachweisen.
 
@@ -389,6 +391,30 @@ exklusiven Host belegen keine Langzeit- oder Hardwareleistung.
   GLIBC_2.39. Keine Linux-/macOS-Ressourcenmessung. Höhere Auflösungen,
   längere Last und kleine Antwortzeiten auf ruhigem Host brauchen eigene Läufe.
 
-Die Nutzerabnahme des Branches und eine spätere Produktivfreigabe bleiben
-getrennte Entscheidungen. Der Testdaemon wird auf ausdrücklichen Nutzerwunsch betrieben;
-Push, main-Merge, SCM-Dienstinstallation und Produktivfreigabe erfolgten nicht.
+## Freigegebener Dauerbetrieb auf ENVY
+
+Die ausdrückliche Freigabe aus Kommentar 59 umfasst Commit/Push auf `main`
+und den dauerhaften ENVY-Betrieb. Das bereits geprüfte Full-Release aus
+`17bc3bc` liegt dafür außerhalb von `target` in einem festen Versionsverzeichnis;
+alle 482 Paketprüfsummen wurden nach dem Kopieren erneut geprüft.
+Eine weitere Kompilierung war nicht erforderlich.
+
+Die Windows-Aufgabe `KVMHelm` startet den Daemon unter dem bisherigen
+Datenbesitzer `ENVY\Agent` mit begrenzten Rechten und S4U-Anmeldung in
+Session 0. Boot-/Anmeldetrigger und ein unbefristeter Minutentrigger sorgen
+für Autostart ohne interaktive Anmeldung und Wiederanlauf; parallele
+Instanzen, Laufzeitlimit und Batterieabbruch sind deaktiviert.
+Die [Betriebsanleitung](native-packaging.md#dauerbetrieb-auf-envy) beschreibt
+Programm-/Datenpfade, Wartung und Wiederaufnahme.
+
+Der vorherige Konsolenprozess endete geordnet mit Exitcode 0 und ohne aktive
+Kontrolllease; Daten und Secrets wurden zusammen privat gesichert. Anschließend
+bestand ein tatsächlicher Ausfalltest: Der gezielt beendete Aufgabenprozess
+`187048` wurde ohne expliziten Start durch PID `170164` ersetzt. Readiness
+kehrte nach 4,23 Sekunden zurück, alle fünf vorherigen eigenen Prozesse waren
+beendet, beide Listener gehörten genau einem neuen Daemon in Session 0.
+Lokale und LAN-TLS-Readiness, Web und authentifizierte API bestehen erneut.
+Geräte-/Pluginkonfiguration, dauerhafte Tokenfelder sowie alle sieben
+Secretdateien sind unverändert; das vorhandene Plugin meldet `running`.
+Der Ausfalltest prüft den automatischen Prozesswiederanlauf; ein Hostneustart
+wurde nicht ausgelöst. Windows-SCM bleibt separat ungeprüft.
